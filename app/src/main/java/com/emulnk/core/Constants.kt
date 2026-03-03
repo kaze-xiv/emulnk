@@ -18,8 +18,12 @@ object MemoryConstants {
     /** Delay after successful detection before starting polling in milliseconds */
     const val DETECTION_SUCCESS_DELAY_MS = 3000L
 
-    /** Maximum number of consecutive detection failures before giving up */
+    /** Maximum number of consecutive detection failures before clearing game state */
     const val MAX_DETECTION_FAILURES = 3
+
+    /** Number of consecutive failures before re-identifying the emulator on each port.
+     *  Handles emulator switches on the same port (e.g. Dolphin → RetroArch). */
+    const val IDENTITY_REFRESH_FAILURES = 10
 
     /** Virtual address used for file-based serial extraction (PS1, SNES, Genesis) */
     const val VIRTUAL_SERIAL_ADDR = 0x00200000L
@@ -38,6 +42,9 @@ object MemoryConstants {
 
     /** UDP timeout for EMLK identify requests in milliseconds */
     const val IDENTIFY_TIMEOUT_MS = 300
+
+    /** UDP timeout for virtual serial reads (file I/O on emulator side) in milliseconds */
+    const val VIRTUAL_SERIAL_TIMEOUT_MS = 1500
 }
 
 object UiConstants {

@@ -86,6 +86,9 @@ class MemoryService(private val repository: MemoryRepository) {
                 }
 
                 // Phase 2 — Game detection: only probe configs that match port identity
+                // Cache virtual serial reads per port to avoid redundant UDP round-trips
+                val virtualSerialCache = mutableMapOf<Int, String?>()
+
                 for (config in consoleConfigs) {
                     if (matchedPort != null && config.port != matchedPort) continue
 
@@ -95,28 +98,33 @@ class MemoryService(private val repository: MemoryRepository) {
                         if (!identity.isNullOrEmpty() && !identity.equals(config.emulatorId, ignoreCase = true)) continue
                     }
 
-                    repository.setPort(config.port)
                     val idAddr = parseHex(config.idAddress) ?: continue
                     val idSize = if (config.idSize > 0) config.idSize else 6
-                    val rawId = repository.readMemory(idAddr, idSize)
-                    val response = rawId?.decodeToString()?.trim() ?: continue
 
                     if (idAddr == MemoryConstants.VIRTUAL_SERIAL_ADDR) {
-                        // Platform-prefix protocol: response may be "SNES:SUPER METROID"
+                        // Read virtual serial once per port, reuse for all configs on that port
+                        val response = virtualSerialCache.getOrPut(config.port) {
+                            repository.setPort(config.port)
+                            repository.readMemoryWithTimeout(idAddr, idSize, MemoryConstants.VIRTUAL_SERIAL_TIMEOUT_MS)?.decodeToString()?.trim()
+                        } ?: continue
+
+                        // Discard stale identify responses received on the data socket (UDP race)
+                        val identity = portIdentity[config.port]
+                        if (!identity.isNullOrEmpty() && response.equals(identity, ignoreCase = true)) continue
+
                         val colonIdx = response.indexOf(':')
                         if (colonIdx > 0) {
                             val prefix = response.substring(0, colonIdx)
                             val serial = response.substring(colonIdx + 1)
                             if (prefix != config.console) continue
-                            // Relaxed filter: allow hyphens, spaces (PS1 serials, SNES names)
                             val idString = serial.filter {
-                                it.isLetterOrDigit() || it == '-' || it == ' '
+                                it.isLetterOrDigit() || it == '-' || it == '_' || it == ' '
                             }.trim()
                             if (idString.length >= 3) {
                                 bestIdString = idString
                                 bestConsole = config.console
                                 matchedPort = config.port
-                                break // Authoritative match
+                                break
                             }
                         } else {
                             // Legacy fallback: no colon, use longest-match heuristic
@@ -131,7 +139,10 @@ class MemoryService(private val repository: MemoryRepository) {
                             }
                         }
                     } else {
-                        // Non-virtual-address entries: unchanged behavior
+                        // Non-virtual-address entries: direct memory read
+                        repository.setPort(config.port)
+                        val rawId = repository.readMemory(idAddr, idSize)
+                        val response = rawId?.decodeToString()?.trim() ?: continue
                         val idString = response.filter { it.isLetterOrDigit() }
                         if (idString.length >= 4
                             && idString.length >= response.length / 2) {
@@ -157,11 +168,19 @@ class MemoryService(private val repository: MemoryRepository) {
                 if (!found) {
                     detectionFailures++
                     if (detectionFailures >= MemoryConstants.MAX_DETECTION_FAILURES) {
-                        portIdentity.clear() // Force re-identification on next cycle
-                        _detectedGameId.value = null
-                        _detectedConsole.value = null
-                        _uiState.value = _uiState.value.copy(isConnected = false)
-                        wasGameDetected = false
+                        // Clear game state once, but keep identity cached
+                        if (wasGameDetected) {
+                            _detectedGameId.value = null
+                            _detectedConsole.value = null
+                            _uiState.value = _uiState.value.copy(isConnected = false)
+                            wasGameDetected = false
+                        }
+                    }
+                    // After extended failures, re-identify to handle emulator
+                    // switches on the same port (e.g. Dolphin → RetroArch)
+                    if (detectionFailures >= MemoryConstants.IDENTITY_REFRESH_FAILURES) {
+                        portIdentity.clear()
+                        detectionFailures = MemoryConstants.MAX_DETECTION_FAILURES
                     }
                 }
                 delay(if (found && detectionFailures == 0) MemoryConstants.DETECTION_SUCCESS_DELAY_MS else MemoryConstants.DETECTION_RETRY_DELAY_MS)

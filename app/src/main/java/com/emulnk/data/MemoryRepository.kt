@@ -46,12 +46,15 @@ class MemoryRepository(
 
     private fun drainStalePackets(sock: DatagramSocket) {
         val saved = sock.soTimeout
-        sock.soTimeout = 1
-        val drain = DatagramPacket(ByteArray(1), 1)
-        repeat(10) {
-            try { sock.receive(drain) } catch (_: java.net.SocketTimeoutException) { return }
+        try {
+            sock.soTimeout = 1
+            val drain = DatagramPacket(ByteArray(1), 1)
+            repeat(10) {
+                try { sock.receive(drain) } catch (_: java.net.SocketTimeoutException) { return }
+            }
+        } finally {
+            sock.soTimeout = saved
         }
-        sock.soTimeout = saved
     }
 
     @Synchronized
@@ -115,6 +118,18 @@ class MemoryRepository(
                 Log.d(TAG, "identify() on port $port: ${e.message}")
             }
             null
+        } finally {
+            currentSocket.soTimeout = savedTimeout
+        }
+    }
+
+    @Synchronized
+    fun readMemoryWithTimeout(memoryAddress: Long, size: Int, timeoutMs: Int): ByteArray? {
+        val currentSocket = getSocket()
+        val savedTimeout = currentSocket.soTimeout
+        return try {
+            currentSocket.soTimeout = timeoutMs
+            readMemory(memoryAddress, size)
         } finally {
             currentSocket.soTimeout = savedTimeout
         }
