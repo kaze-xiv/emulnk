@@ -25,7 +25,7 @@ object MemoryConstants {
      *  Handles emulator switches on the same port (e.g. Dolphin → RetroArch). */
     const val IDENTITY_REFRESH_FAILURES = 10
 
-    /** Virtual address used for file-based serial extraction (PS1, SNES, Genesis) */
+    /** Virtual address used for file-based serial extraction (all RetroArch cores) */
     const val VIRTUAL_SERIAL_ADDR = 0x00200000L
 
     /** Maximum single read size in bytes */
