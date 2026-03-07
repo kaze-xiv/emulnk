@@ -3,8 +3,8 @@
 </p>
 
 <p align="center">
-  <strong>Emulator companion app that turns your second screen into a themed dashboard.</strong><br/>
-  Built for dual-display handhelds.
+  <strong>The DS experience, for every emulator.</strong><br/>
+  Show live game data on your second screen, or on top of the game.
 </p>
 
 <p align="center">
@@ -25,7 +25,7 @@
 
 ## What It Does
 
-EmuLnk connects to emulators over UDP, reads game memory in real time, and renders themed overlays (health bars, inventories, maps, enemy stats) on your second screen, or as floating widgets on top of the game. Themes are HTML/CSS/JS WebViews driven by live data defined in JSON profiles.
+EmuLnk connects to emulators over UDP, reads game memory in real time, and renders it as themed HTML pages. It supports three modes: full-screen dashboards on a second screen, floating overlay widgets on top of the game, or both at once (bundle). Themes are HTML/CSS/JS WebViews driven by live data from JSON profiles. Themes can also write back to game memory, run macros, play sounds, and trigger haptic feedback.
 
 <p align="center">
   <em>Screenshots coming soon</em>
@@ -49,7 +49,7 @@ EmuLnk connects to emulators over UDP, reads game memory in real time, and rende
 ```mermaid
 flowchart TB
     subgraph S1["Screen 1"]
-        EMU["Emulator"]
+        EMU["Emulator + Overlay Widgets"]
     end
 
     subgraph BG[" "]
@@ -57,7 +57,7 @@ flowchart TB
     end
 
     subgraph S2["Screen 2"]
-        THEME["Theme WebView"]
+        THEME["Theme Dashboard"]
     end
 
     EMU -- "game serial · UDP" --> APP
@@ -74,7 +74,7 @@ flowchart TB
 
 1. **Detect**: Sends a UDP request, emulator responds with a platform-prefixed serial (e.g. `SNES:SUPER METROID`)
 2. **Match**: Serial maps to a profile defining memory addresses and data types
-3. **Poll**: Data points are read from emulator memory each frame
+3. **Poll**: Data points are read from emulator memory at a configurable rate (default 5 Hz)
 4. **Render**: Live data is pushed to the theme WebView (full-screen dashboard or floating overlay widgets) via JavaScript bridge
 
 ## Installation
@@ -92,7 +92,7 @@ cd emulnk
 ./gradlew assembleDebug
 ```
 
-Requires Android SDK 34+ and JDK 17.
+Requires Android SDK 35 and JDK 11.
 
 ## Creating Themes
 
@@ -102,7 +102,8 @@ Themes are self-contained folders with HTML, CSS, JS, and a `theme.json` manifes
 |----------|-------------|
 | [Getting Started](https://github.com/EmuLnk/emulnk-repo/wiki/Getting-Started) | First theme walkthrough |
 | [Theme Format](https://github.com/EmuLnk/emulnk-repo/wiki/Theme-Format) | Manifest and file structure |
-| [Theme API](https://github.com/EmuLnk/emulnk-repo/wiki/Theme-API) | JavaScript bridge methods |
+| [Theme API](https://github.com/EmuLnk/emulnk-repo/wiki/Theme-API) | Data contract and updateData() |
+| [Bridge Methods](https://github.com/EmuLnk/emulnk-repo/wiki/Bridge-Methods) | JavaScript bridge reference (`emulink.*`) |
 | [Profile Format](https://github.com/EmuLnk/emulnk-repo/wiki/Profile-Format) | Data point definitions |
 | [Platform Quirks](https://github.com/EmuLnk/emulnk-repo/wiki/Platform-Quirks) | System-specific memory notes |
 
