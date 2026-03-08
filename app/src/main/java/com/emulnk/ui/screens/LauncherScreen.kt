@@ -1,6 +1,7 @@
 package com.emulnk.ui.screens
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.HorizontalPager
@@ -24,10 +25,21 @@ import com.emulnk.model.AppConfig
 import com.emulnk.model.ThemeConfig
 import com.emulnk.model.ThemeType
 import com.emulnk.model.resolvedType
+import com.emulnk.model.SavedOverlayConfig
 import com.emulnk.ui.components.PairingBottomSheet
 import com.emulnk.ui.components.ThemeCard
 import com.emulnk.ui.theme.*
 
+private fun AppConfig.isDefaultForGame(gameId: String?, itemId: String): Boolean {
+    if (gameId == null) return false
+    return defaultThemes[gameId] == itemId ||
+        (defaultOverlays ?: emptyMap())[gameId] == itemId ||
+        defaultBundles[gameId]?.let {
+            it.primaryOverlayId == itemId || it.secondaryOverlayId == itemId
+        } == true
+}
+
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun LauncherScreen(
     detectedGameId: String?,
@@ -37,16 +49,29 @@ fun LauncherScreen(
     rootPath: String,
     isDualScreen: Boolean,
     onSelectTheme: (ThemeConfig) -> Unit,
-    onSelectPair: (theme: ThemeConfig?, overlay: ThemeConfig?, setDefault: Boolean) -> Unit,
     onSelectOverlayBundle: (primary: ThemeConfig?, secondary: ThemeConfig?, setDefault: Boolean) -> Unit,
     onSetDefaultTheme: (gameId: String, themeId: String) -> Unit,
     onOpenGallery: () -> Unit,
     onOpenSettings: () -> Unit,
-    onSync: () -> Unit
+    onSync: () -> Unit,
+    uninstalledThemeCount: Int = 0,
+    hasGalleryWidgets: Boolean = false,
+    onJumpToGallery: () -> Unit = {},
+    detectedGameName: String? = null,
+    userOverlays: List<ThemeConfig> = emptyList(),
+    onDeleteOverlay: (String) -> Unit = {},
+    onEditOverlay: (ThemeConfig) -> Unit = {},
+    showBuilderButton: Boolean = false,
+    onLaunchBuilder: () -> Unit = {}
 ) {
-    var showPairingSheet by remember { mutableStateOf(false) }
     var showBundleSheet by remember { mutableStateOf(false) }
     var pendingTheme by remember { mutableStateOf<ThemeConfig?>(null) }
+
+    val displayName = when {
+        detectedGameName != null && appConfig.devMode -> "$detectedGameName ($detectedGameId)"
+        detectedGameName != null -> detectedGameName
+        else -> detectedGameId
+    }
 
     Column(modifier = Modifier.fillMaxSize().padding(EmuLnkDimens.spacingXl).statusBarsPadding()) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
@@ -64,6 +89,22 @@ fun LauncherScreen(
                 )
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
+                if (showBuilderButton) {
+                    IconButton(
+                        onClick = onLaunchBuilder,
+                        modifier = Modifier
+                            .padding(end = EmuLnkDimens.spacingMd)
+                            .size(32.dp)
+                            .background(BrandPurple, CircleShape)
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_build),
+                            contentDescription = stringResource(R.string.builder_screen_title),
+                            tint = TextPrimary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
                 IconButton(onClick = onOpenSettings) {
                     Icon(painter = painterResource(R.drawable.ic_settings), contentDescription = stringResource(R.string.settings), tint = TextPrimary, modifier = Modifier.size(20.dp))
                 }
@@ -89,7 +130,7 @@ fun LauncherScreen(
                 .padding(horizontal = EmuLnkDimens.spacingMd, vertical = EmuLnkDimens.spacingXs)
         ) {
             Text(
-                text = if (detectedGameId != null) stringResource(R.string.detected_game, detectedGameId) else stringResource(R.string.searching_game),
+                text = if (detectedGameId != null) stringResource(R.string.detected_game, displayName ?: detectedGameId) else stringResource(R.string.searching_game),
                 fontSize = 12.sp,
                 color = if (detectedGameId != null) StatusSuccess else TextSecondary,
                 fontWeight = FontWeight.SemiBold
@@ -101,16 +142,36 @@ fun LauncherScreen(
         }
 
         Spacer(modifier = Modifier.height(EmuLnkDimens.spacingXxl))
-        if (themes.isEmpty()) {
+        if (themes.isEmpty() && userOverlays.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                val message = when {
-                    detectedGameId != null -> stringResource(R.string.no_themes_for_game, detectedGameId)
-                    else -> stringResource(R.string.no_themes_installed)
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    val message = when {
+                        detectedGameId != null -> stringResource(R.string.no_themes_for_game, displayName ?: detectedGameId)
+                        else -> stringResource(R.string.no_themes_installed)
+                    }
+                    Text(text = message, color = TextSecondary, fontSize = 14.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = EmuLnkDimens.spacingXxl))
+
+                    if (uninstalledThemeCount > 0) {
+                        Spacer(modifier = Modifier.height(EmuLnkDimens.spacingLg))
+                        Button(
+                            onClick = onJumpToGallery,
+                            colors = ButtonDefaults.buttonColors(containerColor = BrandPurple),
+                            shape = RoundedCornerShape(EmuLnkDimens.cornerSm)
+                        ) {
+                            Icon(painter = painterResource(R.drawable.ic_palette), contentDescription = null, tint = TextPrimary, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(EmuLnkDimens.spacingSm))
+                            Text(
+                                if (detectedGameName != null) stringResource(R.string.jump_to_game, detectedGameName)
+                                else stringResource(R.string.browse_game_themes),
+                                color = TextPrimary, fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
                 }
-                Text(text = message, color = TextSecondary, fontSize = 14.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = EmuLnkDimens.spacingXxl))
             }
         } else {
-            val pagerState = rememberPagerState { themes.size }
+            val allPagerThemes = themes + userOverlays
+            val pagerState = rememberPagerState { allPagerThemes.size }
 
             HorizontalPager(
                 state = pagerState,
@@ -118,28 +179,30 @@ fun LauncherScreen(
                 pageSpacing = 16.dp,
                 modifier = Modifier.fillMaxWidth().weight(1f)
             ) { page ->
+                val item = allPagerThemes[page]
+                val isUo = item.id.startsWith(SavedOverlayConfig.ID_PREFIX)
                 ThemeCard(
-                    config = themes[page],
-                    isDefault = appConfig.defaultThemes[detectedGameId] == themes[page].id ||
-                        (appConfig.defaultOverlays ?: emptyMap())[detectedGameId] == themes[page].id,
+                    config = item,
+                    isDefault = appConfig.isDefaultForGame(detectedGameId, item.id),
                     rootPath = rootPath,
+                    isUserOverlay = isUo,
+                    onEdit = if (isUo) ({ onEditOverlay(item) }) else null,
+                    onDelete = if (isUo) ({ onDeleteOverlay(item.id) }) else null,
                     onClick = {
-                        val theme = themes[page]
-                        if (!isDualScreen || theme.resolvedType == ThemeType.BUNDLE) {
-                            onSelectTheme(theme)
-                        } else if (isDualScreen && theme.resolvedType == ThemeType.OVERLAY) {
-                            pendingTheme = theme
-                            showBundleSheet = true
+                        // Single-screen or bundles: select directly.
+                        // Dual-screen non-bundles: open pairing sheet to pick a companion.
+                        if (!isDualScreen || item.resolvedType == ThemeType.BUNDLE) {
+                            onSelectTheme(item)
                         } else {
-                            pendingTheme = theme
-                            showPairingSheet = true
+                            pendingTheme = item
+                            showBundleSheet = true
                         }
                     },
-                    onLongClick = { detectedGameId?.let { gid -> onSetDefaultTheme(gid, themes[page].id) } }
+                    onLongClick = { detectedGameId?.let { gid -> onSetDefaultTheme(gid, item.id) } }
                 )
             }
 
-            if (themes.size > 1) {
+            if (allPagerThemes.size > 1) {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier
@@ -148,10 +211,12 @@ fun LauncherScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     content = {
                         Spacer(modifier = Modifier.weight(1f))
-                        repeat(themes.size) { i ->
+                        repeat(allPagerThemes.size) { i ->
                             val isActive = pagerState.currentPage == i
+                            val isUoDot = allPagerThemes[i].id.startsWith(SavedOverlayConfig.ID_PREFIX)
+                            val activeColor = if (isUoDot) BrandCyan else BrandPurple
                             val color by animateColorAsState(
-                                targetValue = if (isActive) BrandPurple else TextTertiary,
+                                targetValue = if (isActive) activeColor else TextTertiary,
                                 label = "dotColor"
                             )
                             Box(
@@ -167,38 +232,68 @@ fun LauncherScreen(
                 )
             }
 
+            val hasExtras = uninstalledThemeCount > 0 || hasGalleryWidgets
+            if (hasExtras) {
+                val hintText = stringResource(R.string.more_items_available)
+
+                TextButton(
+                    onClick = onJumpToGallery,
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(vertical = EmuLnkDimens.spacingSm)
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_palette),
+                        contentDescription = null,
+                        tint = BrandPurple,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(EmuLnkDimens.spacingSm))
+                    Text(hintText, color = BrandPurple, fontSize = 13.sp)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Icon(
+                        painter = painterResource(R.drawable.ic_arrow_forward),
+                        contentDescription = null,
+                        tint = BrandPurple,
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+            }
+
             Spacer(modifier = Modifier.height(EmuLnkDimens.spacingLg))
         }
+
     }
 
-    if (showPairingSheet && pendingTheme != null) {
-        val tapped = pendingTheme!!
-        val oppositeType = if (tapped.resolvedType == ThemeType.OVERLAY) ThemeType.THEME else ThemeType.OVERLAY
-        val companions = themes.filter { it.resolvedType == oppositeType }
+    val allThemes = themes + userOverlays
+
+    val tapped = pendingTheme
+    if (showBundleSheet && tapped != null) {
+        val companions = allThemes.filter { it.id != tapped.id && it.resolvedType != ThemeType.BUNDLE }
+
+        val savedBundle = detectedGameId?.let { appConfig.defaultBundles[it] }
+        val isDefault = appConfig.isDefaultForGame(detectedGameId, tapped.id)
+        val defaultCompanionId = when {
+            savedBundle?.primaryOverlayId == tapped.id -> savedBundle?.secondaryOverlayId
+            savedBundle?.secondaryOverlayId == tapped.id -> savedBundle?.primaryOverlayId
+            else -> {
+                if (appConfig.defaultThemes[detectedGameId] == tapped.id)
+                    (appConfig.defaultOverlays ?: emptyMap())[detectedGameId]
+                else if ((appConfig.defaultOverlays ?: emptyMap())[detectedGameId] == tapped.id)
+                    appConfig.defaultThemes[detectedGameId]
+                else null
+            }
+        }
 
         PairingBottomSheet(
             selectedItem = tapped,
             companions = companions,
-            gameName = detectedGameId ?: "this game",
-            onDismiss = { showPairingSheet = false; pendingTheme = null },
-            onLaunch = { theme, overlay, setDefault ->
-                showPairingSheet = false; pendingTheme = null
-                onSelectPair(theme, overlay, setDefault)
-            }
-        )
-    }
-
-    if (showBundleSheet && pendingTheme != null) {
-        val tapped = pendingTheme!!
-        val otherOverlays = themes.filter { it.resolvedType == ThemeType.OVERLAY && it.id != tapped.id }
-
-        PairingBottomSheet(
-            selectedItem = tapped,
-            companions = otherOverlays,
-            gameName = detectedGameId ?: "this game",
+            gameName = displayName ?: stringResource(R.string.fallback_game_name),
+            rootPath = rootPath,
             isDualScreenBundle = true,
+            isCurrentDefault = isDefault,
+            defaultCompanionId = defaultCompanionId,
             onDismiss = { showBundleSheet = false; pendingTheme = null },
-            onLaunch = { _, _, _ -> /* unused for bundle mode */ },
+            onLaunch = { _, _, _ -> },
             onLaunchBundle = { primary, secondary, setDefault ->
                 showBundleSheet = false; pendingTheme = null
                 onSelectOverlayBundle(primary, secondary, setDefault)
@@ -206,3 +301,4 @@ fun LauncherScreen(
         )
     }
 }
+

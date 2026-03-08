@@ -28,17 +28,23 @@
     <string name="dev_mode_active">Dev Mode Active</string>
     <string name="no_themes_for_game">No themes found for %1$s</string>
     <string name="no_themes_installed">No themes installed. Sync the repository or import a theme.</string>
+    <string name="browse_game_themes">Browse Themes in Gallery</string>
+    <string name="jump_to_game">Browse themes for %1$s</string>
 
     <!-- Gallery -->
     <string name="gallery_title">Theme Gallery</string>
     <string name="tab_community">Community</string>
-    <string name="tab_local">Local</string>
+    <string name="tab_local">Installed</string>
     <string name="requires_app_version">Requires App v%1$d</string>
     <string name="update_available">Update Available (Local: v%1$s)</string>
     <string name="installed">Installed</string>
     <string name="imported">Imported</string>
-    <string name="no_imported_themes">No imported themes.\nUse the import button to add a .zip theme.</string>
+    <string name="no_installed_themes">No installed themes.</string>
     <string name="import_theme">Import</string>
+    <string name="search_themes">Search themes…</string>
+    <string name="no_themes_found">No themes found</string>
+    <string name="theme_count">%1$d themes</string>
+    <string name="browse_all">Browse All</string>
 
     <!-- Dashboard -->
     <string name="waiting_for_data">Waiting for data…</string>
@@ -78,11 +84,78 @@
     <string name="overlay_done">Done</string>
     <string name="overlay_reset">Reset</string>
     <string name="overlay_all_hidden">All widgets hidden. Tap indicator to edit.</string>
+    <string name="back_press_exit">Press back again to exit</string>
+
+    <!-- Theme Chrome (interactive overlay) -->
+    <string name="theme_settings_title">Theme Settings</string>
+    <string name="theme_chrome_reload">Reload</string>
+    <string name="theme_chrome_settings">Settings</string>
+    <string name="theme_chrome_debug">Debug Console</string>
 
     <!-- Dual-Screen / Overlay Bundles -->
     <string name="pair_overlay_bundle">Pair overlays for dual screens</string>
     <string name="screen_primary">Primary Screen</string>
     <string name="screen_secondary">Secondary Screen</string>
-    <string name="swap_screens">Swap Screens</string>
+    <string name="swap_screens">Swap</string>
     <string name="overlay_bundle_active">Dual-screen overlay active</string>
+
+    <!-- Widget Store -->
+    <string name="widget_store_title">Widgets</string>
+    <string name="widget_store_download">Download Widgets</string>
+    <string name="widget_store_download_desc">Download individual widgets for this game to build a custom overlay.</string>
+    <string name="widget_count">%1$d widgets available</string>
+    <string name="launch_overlay_builder">Launch Overlay Builder</string>
+    <string name="download_all_widgets">Download All</string>
+    <string name="delete_all_widgets">Delete All</string>
+
+    <!-- Widget Updates -->
+    <string name="widgets_update_available">Widget updates available</string>
+    <string name="widgets_update_btn">Update</string>
+
+    <!-- Builder Mode -->
+    <string name="builder_add_widget">Add</string>
+    <string name="builder_remove_widget">Remove</string>
+    <string name="builder_notification_text">Overlay Builder active</string>
+    <string name="builder_drawer_title">Widgets</string>
+    <string name="screen_primary_short">1st</string>
+    <string name="screen_secondary_short">2nd</string>
+
+    <!-- Builder Screen (Compose) -->
+    <string name="builder_screen_title">Custom Overlay</string>
+    <string name="builder_launch_preview">Launch Overlay</string>
+    <string name="builder_assign_primary">Primary</string>
+    <string name="builder_assign_secondary">Secondary</string>
+    <string name="builder_assign_none">None</string>
+    <string name="builder_tab_all">All</string>
+    <string name="builder_no_widgets">No widgets installed for this game.\nDownload widgets from the Gallery first.</string>
+    <string name="builder_more_widgets">More widgets available</string>
+    <string name="builder_more_widgets_sub">%1$d more in the Gallery — tap to browse</string>
+
+    <!-- Save Overlay -->
+    <string name="save_overlay">Save</string>
+    <string name="save_overlay_title">Save Overlay</string>
+    <string name="save_overlay_name_hint">Overlay name</string>
+    <string name="save_overlay_type_overlay">Saved as: Overlay</string>
+    <string name="save_overlay_type_bundle">Saved as: Bundle (dual-screen)</string>
+    <string name="save_overlay_success">Overlay saved</string>
+    <string name="save_overlay_add_icon">Add icon</string>
+    <string name="save_overlay_change_icon">Change</string>
+
+    <!-- Type Labels -->
+    <string name="type_theme">Theme</string>
+    <string name="type_overlay">Overlay</string>
+
+    <!-- Badge Labels -->
+    <string name="badge_theme">THEME</string>
+    <string name="badge_overlay">OVERLAY</string>
+    <string name="badge_custom">CUSTOM</string>
+    <string name="badge_bundle">BUNDLE</string>
+    <string name="badge_default">DEFAULT</string>
+
+    <!-- Overlay Opacity -->
+    <string name="overlay_opacity">Opacity</string>
+
+    <!-- Launcher Hints -->
+    <string name="more_items_available">More themes &amp; widgets available</string>
+    <string name="fallback_game_name">this game</string>
 </resources>

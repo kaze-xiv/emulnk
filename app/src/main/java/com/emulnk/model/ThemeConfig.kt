@@ -20,14 +20,40 @@ data class ThemeConfig(
     val hideOverlay: Boolean = false, // Hides overlay buttons when active
     val assetsPath: String? = null,
     val settings: List<ThemeSettingSchema>? = emptyList(),
-    val type: String? = null,    // "theme", "overlay", or "bundle" — null defaults to "theme" (Gson bypasses Kotlin defaults)
+    val type: String? = null,    // "theme", "overlay", or "bundle"; null defaults to "theme" (Gson bypasses Kotlin defaults)
     val widgets: List<WidgetConfig>? = null, // Widget definitions for overlay-type themes
-    val pollingInterval: Long? = null // Preferred polling rate in ms (null = default 200ms)
+    val pollingInterval: Long? = null, // Preferred polling rate in ms (null = default 200ms)
+    val screenTarget: ScreenTarget? = null // Preferred screen for dual-screen (null = primary)
 )
 
 /** Resolves the effective type, defaulting null to "theme". */
 val ThemeConfig.resolvedType: String
     get() = type ?: ThemeType.THEME
+
+/**
+ * Synthesizes a base-layer widget from a theme config (full-screen opaque theme widget).
+ * Assumes all themes use `index.html` as entry point. This is a repo-level contract.
+ */
+fun ThemeConfig.toBaseLayerWidget(): WidgetConfig = WidgetConfig(
+    id = "__base_$id",
+    label = meta.name,
+    src = "index.html",
+    defaultWidth = 0,
+    defaultHeight = 0,
+    defaultX = 0,
+    defaultY = 0,
+    resizable = false,
+    transparent = false,
+    minWidth = 0,
+    minHeight = 0,
+    screenTarget = null,
+    isBaseLayer = true,
+    assetsPath = assetsPath
+)
+
+/** Resolves the preferred screen target: themes default to SECONDARY, overlays to PRIMARY. */
+val ThemeConfig.resolvedScreenTarget: ScreenTarget
+    get() = screenTarget ?: if (resolvedType == ThemeType.THEME) ScreenTarget.SECONDARY else ScreenTarget.PRIMARY
 
 data class ThemeMeta(
     val name: String,

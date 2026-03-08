@@ -21,6 +21,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.delay
+import com.emulnk.model.SavedOverlayConfig
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -31,8 +32,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import coil.compose.AsyncImage
+import com.emulnk.R
 import com.emulnk.model.AppConfig
 import com.emulnk.model.ThemeConfig
 import com.emulnk.model.ThemeType
@@ -41,11 +45,26 @@ import java.io.File
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun ThemeCard(config: ThemeConfig, isDefault: Boolean, rootPath: String, onClick: () -> Unit, onLongClick: () -> Unit) {
+fun ThemeCard(
+    config: ThemeConfig,
+    isDefault: Boolean,
+    rootPath: String,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    isUserOverlay: Boolean = false,
+    onEdit: (() -> Unit)? = null,
+    onDelete: (() -> Unit)? = null
+) {
     val previewFile = remember(config.id, rootPath) {
-        File(rootPath, "themes/${config.id}/preview.png")
+        SavedOverlayConfig.resolvePreviewFile(rootPath, config.id)
     }
     val hasPreview = remember(previewFile) { previewFile.exists() }
+
+    val borderStroke = when {
+        isUserOverlay -> androidx.compose.foundation.BorderStroke(2.dp, BrandCyan)
+        isDefault -> androidx.compose.foundation.BorderStroke(2.dp, BrandPurple)
+        else -> null
+    }
 
     Card(
         modifier = Modifier
@@ -56,8 +75,8 @@ fun ThemeCard(config: ThemeConfig, isDefault: Boolean, rootPath: String, onClick
                 onLongClick = onLongClick
             ),
         shape = RoundedCornerShape(EmuLnkDimens.cornerLg),
-        colors = CardDefaults.cardColors(containerColor = if (isDefault) SurfaceOverlay else SurfaceElevated),
-        border = if (isDefault) androidx.compose.foundation.BorderStroke(2.dp, BrandPurple) else null
+        colors = CardDefaults.cardColors(containerColor = if (isDefault || isUserOverlay) SurfaceOverlay else SurfaceElevated),
+        border = borderStroke
     ) {
         Column(
             modifier = Modifier.fillMaxSize().padding(EmuLnkDimens.spacingLg),
@@ -92,13 +111,22 @@ fun ThemeCard(config: ThemeConfig, isDefault: Boolean, rootPath: String, onClick
                         .padding(EmuLnkDimens.spacingSm),
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
+                    if (config.resolvedType == ThemeType.THEME) {
+                        Box(
+                            modifier = Modifier
+                                .background(BrandPurple, CircleShape)
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text(stringResource(R.string.badge_theme), color = TextPrimary, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
                     if (config.resolvedType == ThemeType.OVERLAY) {
                         Box(
                             modifier = Modifier
                                 .background(BrandCyan, CircleShape)
                                 .padding(horizontal = 8.dp, vertical = 4.dp)
                         ) {
-                            Text("OVERLAY", color = SurfaceBase, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                            Text(stringResource(R.string.badge_overlay), color = SurfaceBase, fontSize = 8.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                     if (config.resolvedType == ThemeType.BUNDLE) {
@@ -107,7 +135,16 @@ fun ThemeCard(config: ThemeConfig, isDefault: Boolean, rootPath: String, onClick
                                 .background(StatusWarning, CircleShape)
                                 .padding(horizontal = 8.dp, vertical = 4.dp)
                         ) {
-                            Text("BUNDLE", color = SurfaceBase, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                            Text(stringResource(R.string.badge_bundle), color = SurfaceBase, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    if (isUserOverlay) {
+                        Box(
+                            modifier = Modifier
+                                .background(BrandCyan, CircleShape)
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text(stringResource(R.string.badge_custom), color = SurfaceBase, fontSize = 8.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                     if (isDefault) {
@@ -116,15 +153,35 @@ fun ThemeCard(config: ThemeConfig, isDefault: Boolean, rootPath: String, onClick
                                 .background(BrandPurple, CircleShape)
                                 .padding(horizontal = 8.dp, vertical = 4.dp)
                         ) {
-                            Text("DEFAULT", color = TextPrimary, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                            Text(stringResource(R.string.badge_default), color = TextPrimary, fontSize = 8.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
             }
             Spacer(modifier = Modifier.height(EmuLnkDimens.spacingMd))
-            Column {
-                Text(text = config.meta.name, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextPrimary, maxLines = 1)
-                Text(text = "Profile: ${config.targetProfileId}", fontSize = 12.sp, color = BrandPurple)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(text = config.meta.name, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextPrimary, maxLines = 1)
+                    Text(text = "Profile: ${config.targetProfileId}", fontSize = 12.sp, color = if (isUserOverlay) BrandCyan else BrandPurple)
+                }
+                if (onEdit != null || onDelete != null) {
+                    Row {
+                        if (onEdit != null) {
+                            IconButton(onClick = onEdit, modifier = Modifier.size(32.dp)) {
+                                Icon(painter = painterResource(R.drawable.ic_edit), contentDescription = "Edit", tint = TextSecondary, modifier = Modifier.size(18.dp))
+                            }
+                        }
+                        if (onDelete != null) {
+                            IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
+                                Icon(painter = painterResource(R.drawable.ic_delete), contentDescription = "Delete", tint = StatusError, modifier = Modifier.size(18.dp))
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -381,5 +438,56 @@ fun AppSettingsDialog(
                 }
             }
         }
+    }
+}
+
+@Composable
+fun ThemePreviewSquare(
+    config: ThemeConfig?,
+    rootPath: String,
+    size: androidx.compose.ui.unit.Dp,
+    fontSize: androidx.compose.ui.unit.TextUnit
+) {
+    val previewFile = remember(config?.id, rootPath) {
+        config?.let { SavedOverlayConfig.resolvePreviewFile(rootPath, it.id) }
+    }
+    val hasPreview = remember(previewFile) { previewFile?.exists() == true }
+
+    Box(
+        modifier = Modifier
+            .size(size)
+            .clip(RoundedCornerShape(EmuLnkDimens.cornerSm))
+            .background(SurfaceBase),
+        contentAlignment = Alignment.Center
+    ) {
+        if (hasPreview && previewFile != null) {
+            AsyncImage(
+                model = previewFile,
+                contentDescription = config?.meta?.name,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else if (config != null) {
+            Text(
+                text = config.targetProfileId.take(2),
+                fontSize = fontSize,
+                fontWeight = FontWeight.Bold,
+                color = TextPrimary.copy(alpha = 0.15f)
+            )
+        }
+    }
+}
+
+@Composable
+fun ThemeTypeBadge(config: ThemeConfig) {
+    val isThemeType = config.resolvedType == ThemeType.THEME
+    val typeLabel = stringResource(if (isThemeType) R.string.type_theme else R.string.type_overlay)
+    val typeColor = if (isThemeType) BrandPurple else BrandCyan
+    Box(
+        modifier = Modifier
+            .background(typeColor.copy(alpha = 0.15f), RoundedCornerShape(EmuLnkDimens.cornerSm))
+            .padding(horizontal = 6.dp, vertical = 2.dp)
+    ) {
+        Text(text = typeLabel, fontSize = 10.sp, color = typeColor, fontWeight = FontWeight.SemiBold)
     }
 }

@@ -29,10 +29,19 @@ class OverlayBridge(
     private val themeId: String,
     private val themesRootDir: File,
     private val devMode: Boolean = false,
-    private val devUrl: String = ""
+    private val devUrl: String = "",
+    private val assetsDir: File? = null,
+    private val onSave: ((String, String) -> Unit)? = null,
+    private val onExit: (() -> Unit)? = null,
+    private val onOpenSettings: (() -> Unit)? = null,
+    private val debugLogCallback: ((String) -> Unit)? = null
 ) {
     private val vibrator: Vibrator =
         (context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
+
+    init {
+        if (devMode) cleanupOrphanedDevSounds()
+    }
 
     @Synchronized
     @JavascriptInterface
@@ -81,11 +90,7 @@ class OverlayBridge(
     fun playSound(fileName: String) {
         if (!BridgeRateLimiter.checkSoundLimit()) return
 
-        if (devMode) {
-            cleanupOrphanedDevSounds()
-        }
-
-        val themeDir = File(themesRootDir, themeId)
+        val themeDir = assetsDir ?: File(themesRootDir, themeId)
         val file = File(themeDir, fileName)
 
         // Path traversal protection
@@ -103,7 +108,7 @@ class OverlayBridge(
                     val baseUrl = devUrl.removeSuffix("/")
                     val soundUrl = "$baseUrl/themes/$themeId/$fileName"
                     log("Dev: Fetching sound from $soundUrl")
-                    val conn = java.net.URL(soundUrl).openConnection() as java.net.HttpURLConnection
+                    val conn = java.net.URL(soundUrl).openConnection() as? java.net.HttpURLConnection ?: return@launch
                     var playbackStarted = false
                     var tempFile: File? = null
                     try {
@@ -134,6 +139,7 @@ class OverlayBridge(
 
     private fun playLocalSound(file: File) {
         val mediaPlayer = android.media.MediaPlayer()
+        var started = false
         try {
             mediaPlayer.setOnCompletionListener {
                 it.release()
@@ -151,12 +157,14 @@ class OverlayBridge(
             mediaPlayer.setDataSource(file.absolutePath)
             mediaPlayer.prepare()
             mediaPlayer.start()
+            started = true
         } catch (e: Exception) {
             log("Sound Error: ${e.message}")
-            mediaPlayer.release()
             if (file.name.startsWith("dev_sound_")) {
                 file.delete()
             }
+        } finally {
+            if (!started) mediaPlayer.release()
         }
     }
 
@@ -168,9 +176,19 @@ class OverlayBridge(
     }
 
     @JavascriptInterface
+    fun save(key: String, value: String) { onSave?.invoke(key, value) }
+
+    @JavascriptInterface
+    fun exit() { onExit?.invoke() }
+
+    @JavascriptInterface
+    fun openSettings() { onOpenSettings?.invoke() }
+
+    @JavascriptInterface
     fun log(message: String) {
         if (BuildConfig.DEBUG) {
             android.util.Log.d("OverlayBridge", "JS: $message")
         }
+        debugLogCallback?.invoke(message)
     }
 }

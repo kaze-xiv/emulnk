@@ -2,7 +2,13 @@ package com.emulnk.core
 
 import android.util.Log
 import com.emulnk.BuildConfig
-import com.emulnk.model.RepoIndex
+import com.emulnk.model.GalleryConsole
+import com.emulnk.model.GalleryGame
+import com.emulnk.model.GalleryIndex
+import com.emulnk.model.GalleryTheme
+import com.emulnk.model.RepoIndexV2
+import com.emulnk.model.StoreWidget
+import com.emulnk.model.ThemeType
 import com.google.gson.Gson
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -18,14 +24,14 @@ import java.util.concurrent.TimeUnit
  * Handles syncing community content from a remote GitHub repository.
  */
 class SyncService(private var rootDir: File) {
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(NetworkConstants.CONNECT_TIMEOUT_MS.toLong(), TimeUnit.MILLISECONDS)
-        .readTimeout(NetworkConstants.READ_TIMEOUT_MS.toLong(), TimeUnit.MILLISECONDS)
-        .build()
-    private val gson = Gson()
 
     companion object {
         private const val TAG = "SyncService"
+        private val client = OkHttpClient.Builder()
+            .connectTimeout(NetworkConstants.CONNECT_TIMEOUT_MS.toLong(), TimeUnit.MILLISECONDS)
+            .readTimeout(NetworkConstants.READ_TIMEOUT_MS.toLong(), TimeUnit.MILLISECONDS)
+            .build()
+        private val gson = Gson()
     }
 
     fun updateRootDir(newDir: File) {
@@ -33,12 +39,19 @@ class SyncService(private var rootDir: File) {
     }
 
     fun close() {
-        client.dispatcher.executorService.shutdown()
-        client.connectionPool.evictAll()
+        Thread {
+            client.dispatcher.executorService.shutdown()
+            client.connectionPool.evictAll()
+        }.start()
     }
 
-    suspend fun fetchRepoIndex(baseUrl: String): RepoIndex? {
-        val url = baseUrl.replace(Regex("archive/refs/heads/(.+)\\.zip"), "raw/$1/index.json")
+    fun deriveRawBaseUrl(archiveUrl: String): String {
+        return archiveUrl
+            .replace(Regex("archive/refs/heads/(.+)\\.zip"), "raw/$1")
+            .trimEnd('/')
+    }
+
+    private suspend fun <T> fetchJsonWithRetry(url: String, label: String, parse: (String) -> T?): T? {
         var lastException: Exception? = null
 
         for (attempt in 0 until SyncConstants.MAX_RETRIES) {
@@ -46,26 +59,91 @@ class SyncService(private var rootDir: File) {
                 val request = Request.Builder().url(url).build()
                 client.newCall(request).execute().use { response ->
                     if (response.isSuccessful) {
-                        return gson.fromJson(response.body?.string(), RepoIndex::class.java)
+                        return parse(response.body?.string() ?: return null)
                     } else {
-                        Log.e(TAG, "Fetch Index Failed: ${response.code} (attempt ${attempt + 1})")
+                        Log.e(TAG, "Fetch $label Failed: ${response.code} (attempt ${attempt + 1})")
                     }
                 }
             } catch (e: Exception) {
                 lastException = e
-                Log.e(TAG, "Fetch Index Exception (attempt ${attempt + 1})", e)
+                Log.e(TAG, "Fetch $label Exception (attempt ${attempt + 1})", e)
             }
 
             if (attempt < SyncConstants.MAX_RETRIES - 1) {
                 val delayMs = SyncConstants.INITIAL_RETRY_DELAY_MS * (1L shl attempt)
-                delay(delayMs)
+                delay(delayMs + (0..delayMs / 4).random())
             }
         }
 
         if (lastException != null) {
-            Log.e(TAG, "Fetch Index failed after ${SyncConstants.MAX_RETRIES} attempts", lastException)
+            Log.e(TAG, "Fetch $label failed after ${SyncConstants.MAX_RETRIES} attempts", lastException)
         }
         return null
+    }
+
+    suspend fun fetchRepoIndex(baseUrl: String): GalleryIndex? {
+        val url = deriveRawBaseUrl(baseUrl) + "/index.json"
+        return fetchJsonWithRetry(url, "Index") { json ->
+            mapToGalleryIndex(gson.fromJson(json, RepoIndexV2::class.java))
+        }
+    }
+
+    private fun mapToGalleryIndex(v2: RepoIndexV2): GalleryIndex {
+        val grouped = v2.games.groupBy { it.console }
+        val consoles = grouped.map { (consoleId, games) ->
+            GalleryConsole(
+                id = consoleId,
+                games = games.map { game ->
+                    GalleryGame(
+                        profileId = game.profileId,
+                        name = game.name,
+                        console = game.console,
+                        hasWidgets = game.hasWidgets,
+                        themes = game.themes.map { theme ->
+                            GalleryTheme(
+                                id = theme.id,
+                                name = theme.name,
+                                author = theme.author,
+                                version = theme.version,
+                                description = theme.description,
+                                type = theme.type ?: ThemeType.THEME,
+                                tags = theme.tags,
+                                minAppVersion = theme.minAppVersion ?: 1,
+                                previewUrl = theme.previewUrl,
+                                console = game.console,
+                                profileId = game.profileId,
+                                gameName = game.name
+                            )
+                        }
+                    )
+                }
+            )
+        }
+        return GalleryIndex(consoles = consoles)
+    }
+
+    suspend fun fetchWidgetsJson(baseUrl: String, console: String, profileId: String): List<StoreWidget>? {
+        val url = "$baseUrl/themes/$console/$profileId/widgets/widgets.json"
+        return fetchJsonWithRetry(url, "Widgets") { json ->
+            gson.fromJson(json, StoreWidget.LIST_TYPE)
+        }
+    }
+
+    suspend fun downloadSingleFile(url: String, targetFile: File): Boolean {
+        return try {
+            val request = Request.Builder().url(url).build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return false
+                targetFile.parentFile?.mkdirs()
+                FileOutputStream(targetFile).use { out ->
+                    response.body?.byteStream()?.copyTo(out)
+                }
+                true
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Download failed: $url", e)
+            false
+        }
     }
 
     /**
@@ -76,6 +154,7 @@ class SyncService(private var rootDir: File) {
         stripRoot: Boolean,
         targetSubDir: String? = null,
         pathFilter: ((String) -> Boolean)? = null,
+        pathRewriter: ((String) -> String)? = null,
         onProgress: (String) -> Unit
     ): Boolean {
         return try {
@@ -101,7 +180,7 @@ class SyncService(private var rootDir: File) {
 
                 // Wrap stream with a bounded input stream to handle missing Content-Length
                 val boundedStream = BoundedInputStream(body.byteStream(), SyncConstants.MAX_DOWNLOAD_SIZE_BYTES)
-                unzipStream(boundedStream, baseDir, stripRoot, onProgress, pathFilter)
+                unzipStream(boundedStream, baseDir, stripRoot, onProgress, pathFilter, pathRewriter)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Download Error", e)
@@ -118,7 +197,8 @@ class SyncService(private var rootDir: File) {
         targetDir: File,
         stripRoot: Boolean,
         onProgress: (String) -> Unit,
-        pathFilter: ((String) -> Boolean)? = null
+        pathFilter: ((String) -> Boolean)? = null,
+        pathRewriter: ((String) -> String)? = null
     ): Boolean {
         var extractionSuccessful = false
         return try {
@@ -141,6 +221,7 @@ class SyncService(private var rootDir: File) {
                 var totalBytesWritten = 0L
                 val extractedFiles = mutableListOf<File>()
                 var failedFile: String? = null
+                val buffer = ByteArray(8192)
 
                 while (entry != null) {
                     entryCount++
@@ -160,9 +241,16 @@ class SyncService(private var rootDir: File) {
                     }
 
                     if (relativePath.isNotEmpty() && (pathFilter == null || pathFilter(relativePath))) {
-                        val targetFile = File(targetDir, relativePath)
+                        val outputPath = pathRewriter?.invoke(relativePath) ?: relativePath
+                        if (outputPath.isEmpty()) {
+                            zipStream.closeEntry()
+                            entry = zipStream.nextEntry
+                            continue
+                        }
+                        val targetFile = File(targetDir, outputPath)
 
-                        // Path traversal protection
+                        // Path traversal protection: the + File.separator suffix ensures
+                        // "/tmp/a" won't match "/tmp/abc/foo", only true children pass.
                         if (!targetFile.canonicalPath.startsWith(canonicalTargetDir + File.separator) &&
                             targetFile.canonicalPath != canonicalTargetDir) {
                             Log.w(TAG, "Path traversal blocked: ${entry.name}")
@@ -177,7 +265,6 @@ class SyncService(private var rootDir: File) {
                             targetFile.parentFile?.mkdirs()
                             try {
                                 FileOutputStream(targetFile).use { output ->
-                                    val buffer = ByteArray(8192)
                                     var bytesRead: Int
                                     while (zipStream.read(buffer).also { bytesRead = it } != -1) {
                                         totalBytesWritten += bytesRead

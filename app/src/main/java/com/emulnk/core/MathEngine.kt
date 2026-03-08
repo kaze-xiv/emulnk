@@ -8,6 +8,8 @@ import com.emulnk.BuildConfig
  */
 object MathEngine {
 
+    private val VALUE_PLACEHOLDER = Regex("\\bv\\b")
+
     fun evaluate(formula: String, value: Double): Double {
         if (formula.length > MathConstants.MAX_EXPRESSION_LENGTH) {
             if (BuildConfig.DEBUG) Log.w("MathEngine", "Formula exceeds max length (${formula.length} > ${MathConstants.MAX_EXPRESSION_LENGTH}): ${formula.take(50)}...")
@@ -15,7 +17,7 @@ object MathEngine {
         }
         // Use BigDecimal to avoid scientific notation (e.g., 1.0E7) which the parser can't handle
         val valueStr = java.math.BigDecimal(value).stripTrailingZeros().toPlainString()
-        val expression = formula.replace(Regex("\\bv\\b"), valueStr)
+        val expression = formula.replace(VALUE_PLACEHOLDER, valueStr)
         return try {
             val result = eval(expression)
             if (!result.isFinite()) {
@@ -29,6 +31,7 @@ object MathEngine {
         }
     }
 
+    /** Standard recursive-descent (precedence-climbing) parser: expression → term → factor. */
     private fun eval(str: String): Double {
         return object : Any() {
             var pos = -1

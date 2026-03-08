@@ -123,4 +123,4 @@ Browse community themes and profiles in [`emulnk-repo`](https://github.com/EmuLn
 
 ## License
 
-[GPLv3](LICENSE)
+[PolyForm Noncommercial License 1.0.0](LICENSE)

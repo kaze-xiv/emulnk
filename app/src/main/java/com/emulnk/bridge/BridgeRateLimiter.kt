@@ -4,7 +4,7 @@ import com.emulnk.BuildConfig
 import com.emulnk.core.BridgeConstants
 
 /**
- * Shared rate limiter for all bridge instances (EmuLinkBridge + OverlayBridge).
+ * Shared rate limiter for OverlayBridge instances.
  * Prevents bundle themes from doubling the effective write/vibrate/sound rate.
  */
 object BridgeRateLimiter {

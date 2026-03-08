@@ -180,7 +180,7 @@ private fun OnboardingPermissionsPage(
 
         Spacer(modifier = Modifier.height(EmuLnkDimens.spacingXl))
 
-        // Optional — not required for Next button
+        // Optional, not required for Next button
         OnboardingStep(
             "3",
             stringResource(R.string.onboarding_overlay_title),

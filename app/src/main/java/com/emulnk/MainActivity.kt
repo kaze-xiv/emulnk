@@ -24,10 +24,14 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.emulnk.core.DisplayHelper
+import com.emulnk.core.OverlayConstants
 import com.emulnk.core.OverlayService
 import com.emulnk.core.UiConstants
+import com.emulnk.model.CustomOverlayConfig
+import com.emulnk.model.SavedOverlayConfig
 import com.emulnk.model.DisplayInfo
 import com.emulnk.model.SafeArea
+import com.emulnk.model.ScreenTarget
 import com.emulnk.model.SystemInfo
 import com.emulnk.model.ThemeConfig
 import com.emulnk.model.ThemeType
@@ -35,8 +39,8 @@ import com.emulnk.model.resolvedType
 import com.emulnk.ui.components.AppSettingsDialog
 import com.emulnk.ui.components.SyncProgressDialog
 import com.emulnk.ui.navigation.Screen
-import com.emulnk.ui.screens.DashboardScreen
 import com.emulnk.ui.screens.GalleryScreen
+import com.emulnk.ui.screens.BuilderScreen
 import com.emulnk.ui.screens.LauncherScreen
 import com.emulnk.ui.screens.OnboardingScreen
 import com.emulnk.ui.theme.EmuLinkTheme
@@ -76,23 +80,44 @@ class MainActivity : ComponentActivity() {
         uri?.let { vm.importTheme(it) }
     }
 
-    private var pendingOverlayTheme: ThemeConfig? = null
-    private var pendingPairedOverlay = false
+    private val iconPicker = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        OverlayService.onImagePicked(uri)
+        window.decorView.post { moveTaskToBack(true) }
+    }
+
+    private var pendingAction: (() -> Unit)? = null
+    private var deselectOnPermissionDenied = true
     private var onOverlayStarted: (() -> Unit)? = null
+
+    private fun withOverlayPermission(deselectOnDenied: Boolean = true, block: () -> Unit) {
+        if (!Settings.canDrawOverlays(this)) {
+            pendingAction = block
+            deselectOnPermissionDenied = deselectOnDenied
+            overlayPermissionLauncher.launch(
+                Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, "package:$packageName".toUri())
+            )
+            return
+        }
+        block()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        if (intent.getBooleanExtra(OverlayService.EXTRA_CLEAR_OVERLAY, false)) {
+            vm.selectTheme(null as ThemeConfig?)
+        }
+    }
 
     private val overlayPermissionLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         if (Settings.canDrawOverlays(this)) {
-            pendingOverlayTheme?.let {
-                if (pendingPairedOverlay) startPairedOverlayService(it) else startOverlayService(it)
-            }
+            pendingAction?.invoke()
         } else {
             Toast.makeText(this, getString(R.string.overlay_permission_required), Toast.LENGTH_SHORT).show()
-            if (!pendingPairedOverlay) {
+            if (deselectOnPermissionDenied) {
                 vm.selectTheme(null as ThemeConfig?)
             }
         }
-        pendingOverlayTheme = null
-        pendingPairedOverlay = false
+        pendingAction = null
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -113,20 +138,56 @@ class MainActivity : ComponentActivity() {
                 val isDualScreen by vm.isDualScreen.collectAsState()
                 val isSyncing by vm.isSyncing.collectAsState()
                 val repoIndex by vm.repoIndex.collectAsState()
+                val rawBaseUrl by vm.rawBaseUrl.collectAsState()
                 val syncMessage by vm.syncMessage.collectAsState()
                 val allInstalledThemes by vm.allInstalledThemes.collectAsState()
                 val isRootPathSet by vm.isRootPathSet.collectAsState()
+                val storeWidgets by vm.storeWidgets.collectAsState()
+
+                val widgetUpdatesAvailable by vm.widgetUpdatesAvailable.collectAsState()
+                val resolvedProfileId by vm.resolvedProfileId.collectAsState()
+                val detectedConsole by vm.detectedConsole.collectAsState()
+                val installedWidgetIds by vm.installedWidgetIds.collectAsState()
+                val userOverlayThemes by vm.userOverlayThemes.collectAsState()
 
                 var currentScreen by remember { mutableStateOf<Screen>(Screen.Onboarding) }
                 onOverlayStarted = { currentScreen = Screen.Overlay }
+                launchBuilderScreen = { pid, con -> currentScreen = Screen.Builder(pid, con) }
                 var showAppSettings by remember { mutableStateOf(false) }
+                var galleryTargetProfileId by remember { mutableStateOf<String?>(null) }
+
+                DisposableEffect(Unit) {
+                    OverlayService.onSaveCompleted = { name, iconUri ->
+                        val pid = vm.resolvedProfileId.value
+                        val con = vm.detectedConsole.value
+                        val builderConfig = pid?.let { vm.loadCustomOverlayConfig(it) }
+                        if (pid != null && builderConfig != null) {
+                            val savedId = vm.saveOverlayPreset(
+                                name = name,
+                                profileId = pid,
+                                console = con,
+                                selectedWidgetIds = builderConfig.selectedWidgetIds,
+                                screenAssignments = builderConfig.screenAssignments
+                            )
+                            if (iconUri != null) {
+                                vm.saveOverlayIcon(savedId, iconUri, this@MainActivity.contentResolver)
+                            }
+                            Toast.makeText(this@MainActivity, getString(R.string.save_overlay_success), Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    OverlayService.onPickImage = { iconPicker.launch("image/*") }
+                    onDispose {
+                        OverlayService.onSaveCompleted = null
+                        OverlayService.onPickImage = null
+                    }
+                }
 
                 LaunchedEffect(onboardingCompleted, selectedTheme, pairedOverlay, pairedSecondaryOverlay) {
                     when {
                         !onboardingCompleted -> currentScreen = Screen.Onboarding
                         selectedTheme != null -> {
                             // Overlay bundle (dual-screen overlay-overlay pairing)
-                            if (pairedSecondaryOverlay != null && selectedTheme!!.resolvedType == ThemeType.OVERLAY) {
+                            if (pairedSecondaryOverlay != null) {
                                 if (OverlayService.isRunning()) {
                                     currentScreen = Screen.Overlay
                                 } else {
@@ -134,9 +195,20 @@ class MainActivity : ComponentActivity() {
                                 }
                             } else when (selectedTheme!!.resolvedType) {
                                 ThemeType.BUNDLE -> {
-                                    currentScreen = Screen.Dashboard
-                                    if (selectedTheme!!.widgets != null && !OverlayService.isRunning()) {
-                                        launchPairedOverlay(selectedTheme!!)
+                                    // User-built overlays bypass the pairing sheet since they already have screen assignments
+                                    val isOverlayBundle = selectedTheme!!.id.startsWith(SavedOverlayConfig.ID_PREFIX) || selectedTheme!!.id.startsWith(OverlayService.CUSTOM_THEME_ID_PREFIX)
+                                    if (isOverlayBundle) {
+                                        if (OverlayService.isRunning()) {
+                                            currentScreen = Screen.Overlay
+                                        } else {
+                                            launchOverlay(selectedTheme!!)
+                                        }
+                                    } else {
+                                        if (OverlayService.isRunning()) {
+                                            currentScreen = Screen.Overlay
+                                        } else {
+                                            launchInteractiveTheme(selectedTheme!!, null)
+                                        }
                                     }
                                 }
                                 ThemeType.OVERLAY -> {
@@ -147,15 +219,16 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                                 else -> {
-                                    currentScreen = Screen.Dashboard
-                                    if (pairedOverlay != null && !OverlayService.isRunning()) {
-                                        launchPairedOverlay(pairedOverlay!!)
+                                    if (OverlayService.isRunning()) {
+                                        currentScreen = Screen.Overlay
+                                    } else {
+                                        launchInteractiveTheme(selectedTheme!!, pairedOverlay)
                                     }
                                 }
                             }
                         }
                         currentScreen == Screen.Onboarding -> currentScreen = Screen.Home
-                        currentScreen == Screen.Dashboard || currentScreen == Screen.Overlay -> currentScreen = Screen.Home
+                        currentScreen == Screen.Overlay -> currentScreen = Screen.Home
                     }
                 }
 
@@ -222,9 +295,25 @@ class MainActivity : ComponentActivity() {
                                     (this@MainActivity).finishAffinity()
                                 } else {
                                     backPressedOnce = true
-                                    Toast.makeText(this@MainActivity, "Press back again to exit", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(this@MainActivity, getString(R.string.back_press_exit), Toast.LENGTH_SHORT).show()
                                 }
                             }
+
+                            val galleryExtras = remember(repoIndex, resolvedProfileId, allInstalledThemes) {
+                                val idx = repoIndex; val pid = resolvedProfileId
+                                if (pid == null || idx == null) null
+                                else {
+                                    val game = idx.consoles.flatMap { it.games }.firstOrNull { it.profileId == pid }
+                                    if (game != null) {
+                                        val installedIds = allInstalledThemes.map { it.id }.toSet()
+                                        val uninstalled = game.themes.count { it.id !in installedIds }
+                                        Triple(uninstalled, game.hasWidgets, game.name)
+                                    } else null
+                                }
+                            }
+                            val uninstalledThemeCount = galleryExtras?.first ?: 0
+                            val hasGalleryWidgets = galleryExtras?.second ?: false
+                            val detectedGameName = galleryExtras?.third
 
                             LauncherScreen(
                                 detectedGameId = detectedGameId,
@@ -233,69 +322,135 @@ class MainActivity : ComponentActivity() {
                                 appConfig = appConfig,
                                 rootPath = rootPath,
                                 isDualScreen = isDualScreen,
-                                onSelectTheme = { vm.selectTheme(it) },
-                                onSelectPair = { theme, overlay, setDefault ->
-                                    vm.selectPair(theme, overlay)
-                                    if (setDefault && detectedGameId != null) {
-                                        vm.setDefaultPairForGame(detectedGameId!!, theme?.id, overlay?.id)
-                                    }
-                                },
+                                onSelectTheme = { theme -> vm.selectTheme(theme) },
                                 onSelectOverlayBundle = { primary, secondary, setDefault ->
-                                    vm.selectOverlayBundle(primary, secondary)
+                                    val theme = listOfNotNull(primary, secondary).find { it.resolvedType == ThemeType.THEME }
+                                    val overlays = listOfNotNull(primary, secondary).filter { it.resolvedType == ThemeType.OVERLAY }
+
+                                    when {
+                                        theme != null && overlays.isNotEmpty() -> {
+                                            // Theme + overlay: route via selectPair → launchInteractiveTheme
+                                            val overlay = overlays.first()
+                                            val themeTarget = if (!isDualScreen || primary?.resolvedType == ThemeType.THEME) ScreenTarget.PRIMARY else ScreenTarget.SECONDARY
+                                            val overlayTarget = if (!isDualScreen || primary?.resolvedType == ThemeType.OVERLAY) ScreenTarget.PRIMARY else ScreenTarget.SECONDARY
+                                            vm.selectPair(
+                                                theme.copy(screenTarget = themeTarget),
+                                                overlay.copy(
+                                                    screenTarget = overlayTarget,
+                                                    widgets = overlay.widgets?.map { it.copy(screenTarget = null) }
+                                                )
+                                            )
+                                        }
+                                        theme != null -> {
+                                            // Theme-only: stamp user's screen choice, then route via selectPair
+                                            val targetedTheme = if (isDualScreen) {
+                                                // User's pairing choice overrides author-defined screenTarget
+                                                val target = if (primary != null) ScreenTarget.PRIMARY else ScreenTarget.SECONDARY
+                                                theme.copy(screenTarget = target)
+                                            } else {
+                                                // Single screen: always primary
+                                                theme.copy(screenTarget = ScreenTarget.PRIMARY)
+                                            }
+                                            vm.selectPair(targetedTheme, null)
+                                        }
+                                        else -> {
+                                            val overriddenPrimary = primary?.let { p ->
+                                                p.copy(
+                                                    screenTarget = ScreenTarget.PRIMARY,
+                                                    widgets = p.widgets?.map { it.copy(screenTarget = null) }
+                                                )
+                                            }
+                                            val overriddenSecondary = secondary?.let { s ->
+                                                s.copy(
+                                                    screenTarget = ScreenTarget.SECONDARY,
+                                                    widgets = s.widgets?.map { it.copy(screenTarget = null) }
+                                                )
+                                            }
+                                            vm.selectOverlayBundle(overriddenPrimary, overriddenSecondary)
+                                        }
+                                    }
+
                                     if (setDefault && detectedGameId != null) {
                                         vm.setDefaultBundleForGame(detectedGameId!!, primary?.id, secondary?.id)
+                                    } else if (!setDefault && detectedGameId != null) {
+                                        val gid = detectedGameId!!
+                                        val launchedIds = setOfNotNull(primary?.id, secondary?.id)
+
+                                        // Clear bundle default if it overlaps with launched items
+                                        val bundle = appConfig.defaultBundles[gid]
+                                        val bundleIds = setOfNotNull(bundle?.primaryOverlayId, bundle?.secondaryOverlayId)
+                                        if (launchedIds.intersect(bundleIds).isNotEmpty()) {
+                                            vm.setDefaultBundleForGame(gid, null, null)
+                                        }
+
+                                        // Clear legacy defaults if they overlap
+                                        val legacyIds = setOfNotNull(
+                                            appConfig.defaultThemes[gid],
+                                            (appConfig.defaultOverlays ?: emptyMap())[gid]
+                                        )
+                                        if (launchedIds.intersect(legacyIds).isNotEmpty()) {
+                                            vm.setDefaultPairForGame(gid, null, null)
+                                        }
                                     }
                                 },
                                 onSetDefaultTheme = { gameId, themeId -> vm.setDefaultThemeForGame(gameId, themeId) },
                                 onOpenGallery = {
+                                    galleryTargetProfileId = null
                                     vm.fetchGallery()
                                     currentScreen = Screen.Gallery
                                 },
                                 onOpenSettings = { showAppSettings = true },
-                                onSync = { vm.syncRepository() }
+                                onSync = { vm.syncRepository() },
+                                uninstalledThemeCount = uninstalledThemeCount,
+                                hasGalleryWidgets = hasGalleryWidgets,
+                                onJumpToGallery = {
+                                    galleryTargetProfileId = resolvedProfileId
+                                    vm.fetchGallery()
+                                    currentScreen = Screen.Gallery
+                                },
+                                detectedGameName = detectedGameName,
+                                userOverlays = userOverlayThemes,
+                                onDeleteOverlay = { vm.deleteOverlayPreset(it) },
+                                onEditOverlay = { overlay ->
+                                    vm.loadSavedOverlayIntoBuilder(overlay.id)
+                                    val pid = resolvedProfileId; val con = detectedConsole
+                                    if (pid != null && con != null) launchBuilder(pid, con)
+                                },
+                                showBuilderButton = resolvedProfileId != null && installedWidgetIds.containsKey(resolvedProfileId),
+                                onLaunchBuilder = {
+                                    val pid = resolvedProfileId; val con = detectedConsole
+                                    if (pid != null && con != null) launchBuilder(pid, con)
+                                }
                             )
                         }
                         is Screen.Gallery -> {
-                            BackHandler { currentScreen = Screen.Home }
+                            BackHandler { galleryTargetProfileId = null; currentScreen = Screen.Home }
 
                             GalleryScreen(
-                                repoIndex = repoIndex,
+                                galleryIndex = repoIndex,
+                                rawBaseUrl = rawBaseUrl,
                                 isSyncing = isSyncing,
                                 allInstalledThemes = allInstalledThemes,
                                 appVersionCode = vm.getAppVersionCode(),
                                 isDualScreen = isDualScreen,
-                                onBack = { currentScreen = Screen.Home },
+                                storeWidgets = storeWidgets,
+                                widgetUpdatesAvailable = widgetUpdatesAvailable,
+                                initialProfileId = galleryTargetProfileId,
+                                onBack = { galleryTargetProfileId = null; currentScreen = Screen.Home },
                                 onImportTheme = { themeImporter.launch("application/zip") },
                                 onSelectTheme = { vm.selectTheme(it) },
                                 onDownloadTheme = { vm.downloadTheme(it) },
-                                onDeleteTheme = { vm.deleteTheme(it) }
+                                onDeleteTheme = { vm.deleteTheme(it) },
+                                onFetchWidgets = { console, profileId -> vm.fetchWidgetsForGame(console, profileId) },
+                                onDownloadWidgets = { console, profileId -> vm.downloadWidgets(console, profileId) },
+                                onUpdateWidgets = { console, profileId -> vm.updateWidgets(console, profileId) },
+                                onLaunchBuilder = { profileId, console -> launchBuilder(profileId, console) },
+                                installedWidgetIds = installedWidgetIds,
+                                onDownloadWidget = { c, p, w -> vm.downloadSingleWidget(c, p, w) },
+                                onDeleteWidget = { p, w -> vm.deleteSingleWidget(p, w) },
+                                onDeleteAllWidgets = { p -> vm.deleteAllWidgets(p) }
                             )
                         }
-                        is Screen.Dashboard -> {
-                            BackHandler {
-                                if (OverlayService.isRunning()) {
-                                    stopOverlayService()
-                                }
-                                vm.selectTheme(null as ThemeConfig?)
-                            }
-
-                            selectedTheme?.let { theme ->
-                                DashboardScreen(
-                                    vm = vm,
-                                    gson = gson,
-                                    theme = theme,
-                                    uiState = uiState,
-                                    debugLogs = debugLogs,
-                                    onExitTheme = {
-                                        if (OverlayService.isRunning()) {
-                                            stopOverlayService()
-                                        }
-                                        vm.selectTheme(null as ThemeConfig?)
-                                    }
-                                )
-                            }
-                        }
-
                         is Screen.Overlay -> {
                             BackHandler {
                                 stopOverlayService()
@@ -307,6 +462,42 @@ class MainActivity : ComponentActivity() {
                                 onExit = {
                                     stopOverlayService()
                                     vm.selectTheme(null as ThemeConfig?)
+                                }
+                            )
+                        }
+
+                        is Screen.Builder -> {
+                            val builderScreen = currentScreen as Screen.Builder
+                            BackHandler { currentScreen = Screen.Home }
+
+                            val builderWidgets = remember(builderScreen.profileId) {
+                                vm.getInstalledStoreWidgets(builderScreen.profileId)
+                            }
+                            val savedBuilderConfig = remember(builderScreen.profileId) {
+                                vm.loadCustomOverlayConfig(builderScreen.profileId)
+                            }
+
+                            BuilderScreen(
+                                profileId = builderScreen.profileId,
+                                console = builderScreen.console,
+                                installedWidgets = builderWidgets,
+                                savedConfig = savedBuilderConfig,
+                                isDualScreen = isDualScreen,
+                                previewBaseUrl = rawBaseUrl.ifBlank { null },
+                                totalWidgetCount = storeWidgets[builderScreen.profileId]?.size ?: 0,
+                                onBack = { currentScreen = Screen.Home },
+                                onBrowseGallery = {
+                                    galleryTargetProfileId = builderScreen.profileId
+                                    vm.fetchGallery()
+                                    currentScreen = Screen.Gallery
+                                },
+                                onLaunchPreview = { selectedIds, screenAssignments ->
+                                    launchBuilderOverlay(
+                                        builderScreen.profileId,
+                                        builderScreen.console,
+                                        selectedIds,
+                                        screenAssignments
+                                    )
                                 }
                             )
                         }
@@ -333,22 +524,14 @@ class MainActivity : ComponentActivity() {
                             onSetDevUrl = { vm.setDevUrl(it) }
                         )
                     }
+
                 }
             }
         }
     }
 
     private fun launchOverlay(theme: ThemeConfig) {
-        if (!Settings.canDrawOverlays(this)) {
-            pendingOverlayTheme = theme
-            val intent = Intent(
-                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                "package:$packageName".toUri()
-            )
-            overlayPermissionLauncher.launch(intent)
-            return
-        }
-        startOverlayService(theme)
+        withOverlayPermission { startOverlayService(theme) }
     }
 
     private fun startOverlayService(theme: ThemeConfig) {
@@ -361,17 +544,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun launchPairedOverlay(theme: ThemeConfig) {
-        if (!Settings.canDrawOverlays(this)) {
-            pendingOverlayTheme = theme
-            pendingPairedOverlay = true
-            val intent = Intent(
-                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                "package:$packageName".toUri()
-            )
-            overlayPermissionLauncher.launch(intent)
-            return
-        }
-        startPairedOverlayService(theme)
+        withOverlayPermission(deselectOnDenied = false) { startPairedOverlayService(theme) }
     }
 
     private fun startPairedOverlayService(theme: ThemeConfig) {
@@ -379,20 +552,31 @@ class MainActivity : ComponentActivity() {
             putExtra(OverlayService.EXTRA_THEME_JSON, gson.toJson(theme))
         }
         startForegroundService(intent)
-        // Don't moveTaskToBack — stay on dashboard
+        // Don't moveTaskToBack, stay on dashboard
+    }
+
+    private fun launchInteractiveTheme(theme: ThemeConfig, pairedOverlay: ThemeConfig?) {
+        withOverlayPermission {
+            val intent = Intent(this, OverlayService::class.java).apply {
+                putExtra(OverlayConstants.EXTRA_INTERACTIVE_THEME, true)
+                if (pairedOverlay != null) {
+                    // Overlay is primary (its widgets float on top)
+                    putExtra(OverlayService.EXTRA_THEME_JSON, gson.toJson(pairedOverlay))
+                    // Theme passed as secondary, service consumes it as base-layer source
+                    putExtra(OverlayService.EXTRA_SECONDARY_THEME_JSON, gson.toJson(theme))
+                } else {
+                    // Theme-only: it IS the primary config
+                    putExtra(OverlayService.EXTRA_THEME_JSON, gson.toJson(theme))
+                }
+            }
+            startForegroundService(intent)
+            onOverlayStarted?.invoke()
+            moveTaskToBack(true)
+        }
     }
 
     private fun launchOverlayBundle(primary: ThemeConfig, secondary: ThemeConfig?) {
-        if (!Settings.canDrawOverlays(this)) {
-            pendingOverlayTheme = primary
-            val intent = Intent(
-                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                "package:$packageName".toUri()
-            )
-            overlayPermissionLauncher.launch(intent)
-            return
-        }
-        startOverlayBundleService(primary, secondary)
+        withOverlayPermission { startOverlayBundleService(primary, secondary) }
     }
 
     private fun startOverlayBundleService(primary: ThemeConfig, secondary: ThemeConfig?) {
@@ -405,6 +589,46 @@ class MainActivity : ComponentActivity() {
         startForegroundService(intent)
         onOverlayStarted?.invoke()
         moveTaskToBack(true)
+    }
+
+    private var launchBuilderScreen: ((String, String) -> Unit)? = null
+
+    private fun launchBuilder(profileId: String, console: String) {
+        launchBuilderScreen?.invoke(profileId, console)
+    }
+
+    private fun launchBuilderOverlay(
+        profileId: String,
+        console: String,
+        selectedWidgetIds: List<String>,
+        screenAssignments: Map<String, ScreenTarget>
+    ) {
+        // Save the custom overlay config
+        vm.saveCustomOverlayConfig(
+            CustomOverlayConfig(
+                profileId = profileId,
+                selectedWidgetIds = selectedWidgetIds,
+                console = console,
+                screenAssignments = screenAssignments
+            )
+        )
+
+        val themeConfig = vm.buildCustomThemeConfigV2(profileId, console, selectedWidgetIds, screenAssignments) ?: return
+        val allWidgets = vm.getInstalledStoreWidgets(profileId)
+
+        // Activate theme so MemoryService starts polling data
+        vm.selectTheme(themeConfig)
+
+        withOverlayPermission(deselectOnDenied = false) {
+            val intent = Intent(this, OverlayService::class.java).apply {
+                putExtra(OverlayService.EXTRA_THEME_JSON, gson.toJson(themeConfig))
+                putExtra(OverlayService.EXTRA_BUILDER_MODE, true)
+                putExtra(OverlayService.EXTRA_AVAILABLE_WIDGETS_JSON, gson.toJson(allWidgets))
+            }
+            startForegroundService(intent)
+            onOverlayStarted?.invoke()
+            moveTaskToBack(true)
+        }
     }
 
     private fun stopOverlayService() {

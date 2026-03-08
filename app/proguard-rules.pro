@@ -13,12 +13,12 @@
 # JavaScript Bridge
 # ============================
 # Preserve @JavascriptInterface annotated methods for WebView theme communication
--keepclassmembers class com.emulnk.bridge.EmuLinkBridge {
+-keepclassmembers class com.emulnk.bridge.OverlayBridge {
     @android.webkit.JavascriptInterface <methods>;
 }
 
 # Keep the entire bridge class to ensure proper initialization
--keep class com.emulnk.bridge.EmuLinkBridge { *; }
+-keep class com.emulnk.bridge.OverlayBridge { *; }
 
 # ============================
 # Gson / JSON Serialization

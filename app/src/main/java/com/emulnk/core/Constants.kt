@@ -1,5 +1,59 @@
 package com.emulnk.core
 
+import android.content.Context
+import android.graphics.PixelFormat
+import android.graphics.drawable.GradientDrawable
+import android.view.Gravity
+import android.view.View
+import android.view.WindowManager
+import android.widget.TextView
+
+/** Safe removal: silently catches IllegalArgumentException from already-removed views. */
+fun WindowManager.safeRemoveView(view: View?) {
+    view ?: return
+    try { removeView(view) } catch (_: Exception) {}
+}
+
+/** Creates the standard recovery pill (⋯) view + layout params for edit mode entry. */
+fun createRecoveryPill(
+    context: Context,
+    density: Float,
+    onClick: () -> Unit
+): Pair<View, WindowManager.LayoutParams> {
+    val widthPx = (40 * density).toInt()
+    val heightPx = (24 * density).toInt()
+
+    val pillBg = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = 12 * density
+        setColor(UiColors.SURFACE_ELEVATED)
+        setStroke((1 * density).toInt(), UiColors.TEXT_SECONDARY)
+    }
+
+    val pill = TextView(context).apply {
+        text = "\u22EF"
+        setTextColor(UiColors.TEXT_PRIMARY)
+        textSize = 14f
+        gravity = Gravity.CENTER
+        background = pillBg
+        alpha = 0.6f
+        setOnClickListener { onClick() }
+    }
+
+    val params = WindowManager.LayoutParams(
+        widthPx, heightPx,
+        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+        PixelFormat.TRANSLUCENT
+    ).apply {
+        gravity = Gravity.TOP or Gravity.END
+        x = (8 * density).toInt()
+        y = (8 * density).toInt()
+    }
+
+    return Pair(pill, params)
+}
+
 /**
  * Application-wide constants for timeouts, intervals, and thresholds.
  * Centralizes magic numbers for maintainability.
@@ -43,8 +97,8 @@ object MemoryConstants {
     /** Maximum depth for multi-level pointer chains */
     const val MAX_POINTER_CHAIN_DEPTH = 10
 
-    /** EMLK discovery handshake magic bytes ("EMLK") */
-    val IDENTIFY_MAGIC = byteArrayOf(0x45, 0x4D, 0x4C, 0x4B)
+    /** Discovery handshake magic */
+    val IDENTIFY_MAGIC = byteArrayOf(0x45, 0x4D, 0x4C, 0x4B) // "EMLK"
 
     /** UDP timeout for EMLK identify requests in milliseconds */
     const val IDENTIFY_TIMEOUT_MS = 300
@@ -78,6 +132,11 @@ object NetworkConstants {
 
     /** HTTP read timeout in milliseconds */
     const val READ_TIMEOUT_MS = 3000
+}
+
+object ConfigConstants {
+    /** Maximum config file size in bytes (1 MB) */
+    const val MAX_CONFIG_FILE_SIZE = 1_000_000L
 }
 
 object SyncConstants {
@@ -133,7 +192,7 @@ object OverlayConstants {
     /** Snap-to-edge threshold in dp */
     const val SNAP_THRESHOLD_DP = 8
 
-    /** Semi-transparent scrim color (80% SurfaceBase) */
+    /** Semi-transparent scrim color, ARGB: 80% alpha + SurfaceBase (#0E0C1C) */
     const val EDIT_SCRIM_COLOR = 0xCC0E0C1C
 
     /** Border corner radius in dp */
@@ -145,9 +204,84 @@ object OverlayConstants {
     /** Unselected widget border width in dp */
     const val EDIT_BORDER_NORMAL_WIDTH_DP = 1
 
+    /** Delay before auto-entering edit mode in builder, allows WebViews to finish loading */
+    const val BUILDER_EDIT_MODE_DELAY_MS = 500L
+
     /** Screen target identifiers for dual-screen overlays */
     const val SCREEN_PRIMARY = "primary"
     const val SCREEN_SECONDARY = "secondary"
+
+    /** Drawer panel height as fraction of screen height */
+    const val DRAWER_HEIGHT_RATIO = 0.45f
+
+    /** Drawer panel slide animation duration in milliseconds */
+    const val DRAWER_ANIM_DURATION_MS = 250L
+
+    /** Bottom inset to clear gesture navigation area (dp) */
+    const val GESTURE_NAV_INSET_DP = 60
+
+    /** Minimum controls bar width (dp) */
+    const val CONTROLS_MIN_WIDTH_DP = 220
+
+    /** Maximum undo/redo stack depth */
+    const val MAX_UNDO_STACK = 50
+
+    /** Double-tap timeout for toggle in milliseconds */
+    const val DOUBLE_TAP_TIMEOUT_MS = 300L
+
+    /** Theme chrome auto-hide delay in milliseconds */
+    const val THEME_CHROME_AUTO_HIDE_MS = 4000L
+
+    /** Theme chrome button size in dp */
+    const val THEME_CHROME_BUTTON_SIZE_DP = 48
+
+    /** Minimum alpha slider value as percentage (prevents fully invisible widgets) */
+    const val ALPHA_SLIDER_MIN_PERCENT = 10
+
+    /** Maximum alpha slider value as percentage */
+    const val ALPHA_SLIDER_MAX_PERCENT = 100
+
+    /** Intent extra flag for interactive theme mode */
+    const val EXTRA_INTERACTIVE_THEME = "interactive_theme"
+
+    /** Edit mode border color: visible but not selected (brand purple) */
+    const val EDIT_BORDER_COLOR_ENABLED = 0xFFB47CFF
+
+    /** Edit mode border color: currently selected (cyan) */
+    const val EDIT_BORDER_COLOR_SELECTED = 0xFF00E5FF
+
+    /** Edit mode border color: disabled (red) */
+    const val EDIT_BORDER_COLOR_DISABLED = 0xFFFF5252
+
+    /** Create the standard edit-mode border drawable for widgets. */
+    fun createEditBorder(density: Float, enabled: Boolean, selected: Boolean): android.graphics.drawable.GradientDrawable {
+        val radiusPx = EDIT_BORDER_RADIUS_DP * density
+        return android.graphics.drawable.GradientDrawable().apply {
+            shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+            setColor(0x00000000)
+            cornerRadius = radiusPx
+            if (!enabled) {
+                setStroke((EDIT_BORDER_NORMAL_WIDTH_DP * density).toInt(), EDIT_BORDER_COLOR_DISABLED.toInt())
+            } else if (selected) {
+                setStroke((EDIT_BORDER_SELECTED_WIDTH_DP * density).toInt(), EDIT_BORDER_COLOR_SELECTED.toInt())
+            } else {
+                setStroke((EDIT_BORDER_NORMAL_WIDTH_DP * density).toInt(), EDIT_BORDER_COLOR_ENABLED.toInt())
+            }
+        }
+    }
+}
+
+/** ARGB int colors for android.view (non-Compose) overlay UI. Mirrors ui.theme.Color. */
+object UiColors {
+    const val SURFACE_BASE = 0xFF0E0C1C.toInt()
+    const val SURFACE_ELEVATED = 0xFF1E1A3A.toInt()
+    const val SURFACE_OVERLAY = 0xFF252142.toInt()
+    const val BRAND_PURPLE = 0xFFB47CFF.toInt()
+    const val BRAND_CYAN = 0xFF00E5FF.toInt()
+    const val TEXT_PRIMARY = 0xFFEDE9FC.toInt()
+    const val TEXT_SECONDARY = 0xFF9E96B8.toInt()
+    const val DIVIDER = 0xFF2A2650.toInt()
+    const val INPUT_BACKGROUND = 0xFF151226.toInt()
 }
 
 object MathConstants {

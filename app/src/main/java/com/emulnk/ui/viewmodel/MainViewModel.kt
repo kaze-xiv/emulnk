@@ -7,6 +7,7 @@ import com.emulnk.EmuLnkApplication
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.emulnk.core.DisplayHelper
+import com.emulnk.core.OverlayService
 import com.emulnk.core.SyncService
 import com.emulnk.core.MemoryConstants
 import com.emulnk.core.TelemetryConstants
@@ -16,25 +17,34 @@ import com.emulnk.model.AppConfig
 import com.emulnk.model.BatteryInfo
 import com.emulnk.model.GameData
 import com.emulnk.model.OverlayBundle
-import com.emulnk.model.RepoIndex
-import com.emulnk.model.RepoTheme
+import com.emulnk.data.MigrationManager
+import com.emulnk.model.CustomOverlayConfig
+import com.emulnk.model.GalleryIndex
+import com.emulnk.model.GalleryTheme
+import com.emulnk.model.SavedOverlayConfig
+import com.emulnk.model.ScreenTarget
+import com.emulnk.model.StoreWidget
+import com.emulnk.model.WidgetConfig
+import com.emulnk.model.toWidgetConfig
 import com.emulnk.model.SystemInfo
 import com.emulnk.model.ThermalInfo
 import com.emulnk.model.ThemeConfig
+import com.emulnk.model.ThemeMeta
 import com.emulnk.model.ThemeType
+import com.emulnk.model.resolvedScreenTarget
 import com.emulnk.model.resolvedType
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
@@ -88,6 +98,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private val configManager = ConfigManager(application)
+
+    private fun isValidId(id: String): Boolean {
+        return id.isNotBlank() && !id.contains('/') && !id.contains('\\') && !id.contains("..")
+    }
     private val memoryService = getApplication<EmuLnkApplication>().memoryService
     private val telemetryService = TelemetryService(application)
     private val syncService = SyncService(configManager.getRootDir())
@@ -103,6 +117,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _availableThemes = MutableStateFlow<List<ThemeConfig>>(emptyList())
     val availableThemes: StateFlow<List<ThemeConfig>> = _availableThemes
 
+    private val _userOverlayThemes = MutableStateFlow<List<ThemeConfig>>(emptyList())
+    val userOverlayThemes: StateFlow<List<ThemeConfig>> = _userOverlayThemes
+
     private val _allInstalledThemes = MutableStateFlow<List<ThemeConfig>>(emptyList())
     val allInstalledThemes: StateFlow<List<ThemeConfig>> = _allInstalledThemes
 
@@ -115,12 +132,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _pairedSecondaryOverlay = MutableStateFlow<ThemeConfig?>(null)
     val pairedSecondaryOverlay: StateFlow<ThemeConfig?> = _pairedSecondaryOverlay
 
-    private val _showSettingsEvent = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
-    val showSettingsEvent: SharedFlow<Unit> = _showSettingsEvent
-
-    private val _gameClosingEvent = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
-    val gameClosingEvent: SharedFlow<Unit> = _gameClosingEvent
-
     private val _debugLogs = MutableStateFlow<List<String>>(emptyList())
     val debugLogs: StateFlow<List<String>> = _debugLogs
 
@@ -130,8 +141,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _syncMessage = MutableStateFlow("")
     val syncMessage: StateFlow<String> = _syncMessage
 
-    private val _repoIndex = MutableStateFlow<RepoIndex?>(null)
-    val repoIndex: StateFlow<RepoIndex?> = _repoIndex
+    private val _repoIndex = MutableStateFlow<GalleryIndex?>(null)
+    val repoIndex: StateFlow<GalleryIndex?> = _repoIndex
+
+    private val _storeWidgets = MutableStateFlow<Map<String, List<StoreWidget>>>(emptyMap())
+    val storeWidgets: StateFlow<Map<String, List<StoreWidget>>> = _storeWidgets
+
+    private val _installedWidgetProfiles = MutableStateFlow<Set<String>>(emptySet())
+    val installedWidgetProfiles: StateFlow<Set<String>> = _installedWidgetProfiles
+
+    private val _widgetUpdatesAvailable = MutableStateFlow<Set<String>>(emptySet())
+    val widgetUpdatesAvailable: StateFlow<Set<String>> = _widgetUpdatesAvailable
+
+    private val _installedWidgetIds = MutableStateFlow<Map<String, Set<String>>>(emptyMap())
+    val installedWidgetIds: StateFlow<Map<String, Set<String>>> = _installedWidgetIds
+
+    private val _resolvedProfileId = MutableStateFlow<String?>(null)
+    val resolvedProfileId: StateFlow<String?> = _resolvedProfileId
+
+    private val _savedOverlays = MutableStateFlow<List<SavedOverlayConfig>>(emptyList())
+    val savedOverlays: StateFlow<List<SavedOverlayConfig>> = _savedOverlays
+
+    private val _checkedWidgetProfiles: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+    private var settingsSaveJob: Job? = null
+
+    private val _rawBaseUrl = MutableStateFlow("")
+    val rawBaseUrl: StateFlow<String> = _rawBaseUrl
 
     private val _appConfig = MutableStateFlow(configManager.getAppConfig())
     val appConfig: StateFlow<AppConfig> = _appConfig
@@ -146,9 +181,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val isRootPathSet: StateFlow<Boolean> = _isRootPathSet
 
     init {
+        MigrationManager(application, configManager).runIfNeeded()
         refreshAllInstalledThemes()
+        refreshSavedOverlays()
         
         memoryService.start(configManager.getConsoleConfigs())
+
+        if (configManager.isOnboardingCompleted()) {
+            viewModelScope.launch(Dispatchers.IO) {
+                syncRepository()
+            }
+        }
 
         viewModelScope.launch {
             var consecutiveTelemetryFailures = 0
@@ -178,19 +221,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 Triple(gameId, console, path)
             }.debounce(300L).collectLatest { (gameId, console, path) ->
                 if (gameId != null && console != null) {
+                    _resolvedProfileId.value = configManager.resolveProfileId(gameId)
                     refreshThemesForGame(gameId, console)
                     if (_appConfig.value.autoBoot) {
                         autoSelectPair(gameId)
                     }
                 } else {
+                    _resolvedProfileId.value = null
                     if (_selectedTheme.value != null) {
-                        _gameClosingEvent.tryEmit(Unit)
                         delay(2000) // Give theme time to show disconnection state
                     }
                     if (_appConfig.value.devMode) {
                         refreshThemesForDevMode()
                     } else {
                         _availableThemes.value = emptyList()
+                        _userOverlayThemes.value = emptyList()
                     }
                     _selectedTheme.value = null
                     _pairedOverlay.value = null
@@ -230,11 +275,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 val matchesConsole = theme.targetConsole == null || theme.targetConsole == console
 
-                val matches = matchesGame && matchesConsole
-                if (matches && BuildConfig.DEBUG) {
-                    android.util.Log.d(TAG, "Match Found: ${theme.id} targets $themeTarget (resolved $gameId -> $resolvedId)")
-                }
-                return@filter matches
+                return@filter matchesGame && matchesConsole
             }
 
             // Dev mode: all version-compatible themes
@@ -243,15 +284,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun refreshThemesForGame(gameId: String, console: String) {
-        val allThemes = configManager.getAvailableThemes()
+        val allThemes = _allInstalledThemes.value
         if (BuildConfig.DEBUG) {
             android.util.Log.d(TAG, "Refreshing themes for $gameId ($console). Found ${allThemes.size} total themes.")
         }
-        _availableThemes.value = filterThemes(allThemes, gameId, console)
+        val filtered = filterThemes(allThemes, gameId, console).toMutableList()
+
+        val resolvedId = configManager.resolveProfileId(gameId)
+        if (resolvedId != null && configManager.hasInstalledWidgets(resolvedId)) {
+            if (!_storeWidgets.value.containsKey(resolvedId)) {
+                val local = configManager.loadStoreWidgets(resolvedId)
+                if (local.isNotEmpty()) {
+                    _storeWidgets.value = _storeWidgets.value + (resolvedId to local)
+                }
+            }
+            _installedWidgetProfiles.value = _installedWidgetProfiles.value + resolvedId
+            refreshInstalledWidgetIds(resolvedId)
+        }
+
+        // Build user overlay themes separately
+        val userOverlays = mutableListOf<ThemeConfig>()
+        for (saved in _savedOverlays.value) {
+            if (saved.profileId == resolvedId && (saved.console == null || saved.console == console)) {
+                buildSavedOverlayThemeConfig(saved, console)?.let { userOverlays.add(it) }
+            }
+        }
+
+        _availableThemes.value = filtered
+        _userOverlayThemes.value = userOverlays
     }
 
     private fun refreshThemesForDevMode() {
-        val allThemes = configManager.getAvailableThemes()
+        val allThemes = _allInstalledThemes.value
         if (BuildConfig.DEBUG) {
             android.util.Log.d(TAG, "Dev Mode: Loading all ${allThemes.size} themes")
         }
@@ -263,16 +327,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val resolvedId = configManager.resolveProfileId(gameId)
         if (currentTheme == null || (resolvedId != null &&
             !resolvedId.equals(currentTheme.targetProfileId, ignoreCase = true))) {
-            val themes = _availableThemes.value
+            val themes = _availableThemes.value + _userOverlayThemes.value
             if (themes.isEmpty()) return
 
-            // Check for saved overlay bundle first (dual-screen overlay-overlay pairing)
+            // Check for saved overlay bundle first (dual-screen pairing)
             val defaultBundle = _appConfig.value.defaultBundles[gameId]
             if (defaultBundle != null && _isDualScreen.value) {
                 val primary = defaultBundle.primaryOverlayId?.let { id -> themes.find { it.id == id } }
                 val secondary = defaultBundle.secondaryOverlayId?.let { id -> themes.find { it.id == id } }
-                if (primary != null) {
-                    selectOverlayBundle(primary, secondary)
+                if (primary != null || secondary != null) {
+                    val theme = listOfNotNull(primary, secondary).find { it.resolvedType == ThemeType.THEME }
+                    val overlays = listOfNotNull(primary, secondary).filter { it.resolvedType == ThemeType.OVERLAY }
+                    // Dispatch based on bundle composition: theme+overlay, theme-only, or overlay-bundle
+                    when {
+                        theme != null && overlays.isNotEmpty() -> {
+                            val overlay = overlays.first()
+                            val overlayTarget = if (defaultBundle.primaryOverlayId == overlay.id)
+                                ScreenTarget.PRIMARY else ScreenTarget.SECONDARY
+                            selectPair(theme, overlay.copy(screenTarget = overlayTarget))
+                        }
+                        theme != null -> selectPair(theme, null)
+                        else -> selectOverlayBundle(primary, secondary)
+                    }
                     return
                 }
             }
@@ -283,7 +359,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             when (themeToSelect.resolvedType) {
                 ThemeType.BUNDLE -> selectPair(themeToSelect, null)
-                ThemeType.OVERLAY -> selectPair(null, themeToSelect)
+                ThemeType.OVERLAY -> {
+                    if (_isDualScreen.value) {
+                        if (themeToSelect.resolvedScreenTarget == ScreenTarget.SECONDARY) {
+                            selectOverlayBundle(null, themeToSelect)
+                        } else {
+                            selectOverlayBundle(themeToSelect, null)
+                        }
+                    } else {
+                        selectPair(null, themeToSelect)
+                    }
+                }
                 else -> {
                     val overlayToSelect = defaultOverlayId?.let { id ->
                         themes.find { it.id == id && it.resolvedType == ThemeType.OVERLAY }
@@ -295,15 +381,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setAutoBoot(enabled: Boolean) {
-        val newConfig = _appConfig.value.copy(autoBoot = enabled)
-        _appConfig.value = newConfig
-        configManager.saveAppConfig(newConfig)
+        _appConfig.update { it.copy(autoBoot = enabled) }
+        configManager.saveAppConfig(_appConfig.value)
     }
 
     fun setRepoUrl(url: String) {
-        val newConfig = _appConfig.value.copy(repoUrl = url)
-        _appConfig.value = newConfig
-        configManager.saveAppConfig(newConfig)
+        _appConfig.update { it.copy(repoUrl = url) }
+        configManager.saveAppConfig(_appConfig.value)
     }
 
     fun resetRepoUrl() {
@@ -312,9 +396,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setDevMode(enabled: Boolean) {
-        val newConfig = _appConfig.value.copy(devMode = enabled)
-        _appConfig.value = newConfig
-        configManager.saveAppConfig(newConfig)
+        _appConfig.update { it.copy(devMode = enabled) }
+        configManager.saveAppConfig(_appConfig.value)
         val gameId = detectedGameId.value
         val console = detectedConsole.value
         if (gameId != null && console != null) {
@@ -323,13 +406,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             refreshThemesForDevMode()
         } else {
             _availableThemes.value = emptyList()
+            _userOverlayThemes.value = emptyList()
         }
     }
 
     fun setDevUrl(url: String) {
-        val newConfig = _appConfig.value.copy(devUrl = url)
-        _appConfig.value = newConfig
-        configManager.saveAppConfig(newConfig)
+        _appConfig.update { it.copy(devUrl = url) }
+        configManager.saveAppConfig(_appConfig.value)
     }
 
     fun completeOnboarding() {
@@ -361,56 +444,60 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setDefaultThemeForGame(gameId: String, themeId: String) {
-        val newDefaults = _appConfig.value.defaultThemes.toMutableMap()
-        newDefaults[gameId] = themeId
-        val newConfig = _appConfig.value.copy(defaultThemes = newDefaults)
-        _appConfig.value = newConfig
-        configManager.saveAppConfig(newConfig)
+        _appConfig.update { current ->
+            val newDefaults = current.defaultThemes.toMutableMap()
+            newDefaults[gameId] = themeId
+            current.copy(defaultThemes = newDefaults)
+        }
+        configManager.saveAppConfig(_appConfig.value)
     }
 
     fun setDefaultPairForGame(gameId: String, themeId: String?, overlayId: String?) {
-        val newThemes = _appConfig.value.defaultThemes.toMutableMap()
-        val newOverlays = (_appConfig.value.defaultOverlays ?: emptyMap()).toMutableMap()
+        _appConfig.update { current ->
+            val newThemes = current.defaultThemes.toMutableMap()
+            val newOverlays = (current.defaultOverlays ?: emptyMap()).toMutableMap()
 
-        if (themeId != null) newThemes[gameId] = themeId else newThemes.remove(gameId)
+            if (themeId != null) newThemes[gameId] = themeId else newThemes.remove(gameId)
 
-        // Bundles are exclusive — clear overlay default
-        if (themeId != null && getThemeById(themeId)?.resolvedType == ThemeType.BUNDLE) {
-            newOverlays.remove(gameId)
-        } else {
-            if (overlayId != null) newOverlays[gameId] = overlayId else newOverlays.remove(gameId)
+            // Bundles are exclusive, clear overlay default
+            if (themeId != null && getThemeById(themeId)?.resolvedType == ThemeType.BUNDLE) {
+                newOverlays.remove(gameId)
+            } else {
+                if (overlayId != null) newOverlays[gameId] = overlayId else newOverlays.remove(gameId)
+            }
+
+            current.copy(defaultThemes = newThemes, defaultOverlays = newOverlays)
         }
-
-        val newConfig = _appConfig.value.copy(defaultThemes = newThemes, defaultOverlays = newOverlays)
-        _appConfig.value = newConfig
-        configManager.saveAppConfig(newConfig)
+        configManager.saveAppConfig(_appConfig.value)
     }
 
     fun setDefaultBundleForGame(gameId: String, primaryId: String?, secondaryId: String?) {
-        val newBundles = (_appConfig.value.defaultBundles).toMutableMap()
-        if (primaryId != null || secondaryId != null) {
-            newBundles[gameId] = OverlayBundle(
-                primaryOverlayId = primaryId,
-                secondaryOverlayId = secondaryId
-            )
-        } else {
-            newBundles.remove(gameId)
+        _appConfig.update { current ->
+            val newBundles = current.defaultBundles.toMutableMap()
+            if (primaryId != null || secondaryId != null) {
+                newBundles[gameId] = OverlayBundle(
+                    primaryOverlayId = primaryId,
+                    secondaryOverlayId = secondaryId
+                )
+            } else {
+                newBundles.remove(gameId)
+            }
+            current.copy(defaultBundles = newBundles)
         }
-        val newConfig = _appConfig.value.copy(defaultBundles = newBundles)
-        _appConfig.value = newConfig
-        configManager.saveAppConfig(newConfig)
+        configManager.saveAppConfig(_appConfig.value)
     }
 
     fun selectTheme(theme: ThemeConfig?) {
         _selectedTheme.value = theme
         _pairedOverlay.value = null
+        _pairedSecondaryOverlay.value = null
         if (theme == null) { memoryService.stopPolling(); return }
         loadAndApplyThemeSettings(theme)
     }
 
     fun selectPair(theme: ThemeConfig?, overlay: ThemeConfig?) {
         if (theme == null && overlay != null) {
-            // Overlay-only — treat overlay as the selected theme
+            // Overlay-only, treat overlay as the selected theme
             _selectedTheme.value = overlay
             _pairedOverlay.value = null
         } else {
@@ -423,11 +510,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectOverlayBundle(primary: ThemeConfig?, secondary: ThemeConfig?) {
-        _selectedTheme.value = primary
-        _pairedOverlay.value = null
-        _pairedSecondaryOverlay.value = secondary
-        if (primary == null && secondary == null) { memoryService.stopPolling(); return }
-        primary?.let { loadAndApplyThemeSettings(it) }
+        if (primary == null && secondary == null) {
+            _selectedTheme.value = null
+            _pairedOverlay.value = null
+            _pairedSecondaryOverlay.value = null
+            memoryService.stopPolling()
+            return
+        }
+        if (primary == null && secondary != null) {
+            // Solo overlay (no companion), launch as single overlay
+            _selectedTheme.value = secondary
+            _pairedOverlay.value = null
+            _pairedSecondaryOverlay.value = null
+        } else {
+            _selectedTheme.value = primary
+            _pairedOverlay.value = null
+            _pairedSecondaryOverlay.value = secondary
+        }
+        (primary ?: secondary)?.let { loadAndApplyThemeSettings(it) }
     }
 
     private fun loadAndApplyThemeSettings(theme: ThemeConfig) {
@@ -443,7 +543,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         memoryService.updateState { it.copy(settings = currentSettings) }
 
-        // Mock data when no game is detected — devMode controls theme discovery, not data source
+        // Mock data when no game is detected. devMode controls theme discovery, not data source
         val shouldInjectMock = detectedGameId.value == null
 
         if (shouldInjectMock) {
@@ -486,7 +586,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         newSettings[key] = value
         memoryService.updateState { it.copy(settings = newSettings) }
 
-        viewModelScope.launch(Dispatchers.IO) {
+        settingsSaveJob?.cancel()
+        settingsSaveJob = viewModelScope.launch(Dispatchers.IO) {
+            delay(500)
             try {
                 val saveFile = File(configManager.getSavesDir(), "${themeId}.json")
                 saveFile.parentFile?.mkdirs()
@@ -517,22 +619,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun fetchGallery() {
         viewModelScope.launch(Dispatchers.IO) {
-            val index = syncService.fetchRepoIndex(_appConfig.value.repoUrl)
+            val repoUrl = _appConfig.value.repoUrl
+            _rawBaseUrl.value = syncService.deriveRawBaseUrl(repoUrl)
+            val index = syncService.fetchRepoIndex(repoUrl)
             _repoIndex.value = index
         }
     }
 
-    fun downloadTheme(repoTheme: RepoTheme) {
+    fun downloadTheme(theme: GalleryTheme) {
         if (_isSyncing.value) return
         _isSyncing.value = true
-        _syncMessage.value = "Downloading ${repoTheme.name}..."
+        _syncMessage.value = "Downloading ${theme.name}..."
 
-        val themePrefix = "themes/${repoTheme.id}/"
+        // v2 repo path: themes/{console}/{profileId}/{themeId}/
+        val themePrefix = "themes/${theme.console}/${theme.profileId}/${theme.id}/"
+        // Rewrite to flat local path: themes/{themeId}/
+        val localPrefix = "themes/${theme.id}/"
         viewModelScope.launch(Dispatchers.IO) {
             val success = syncService.downloadAndExtract(
                 url = _appConfig.value.repoUrl,
                 stripRoot = true,
-                pathFilter = { path -> path.startsWith(themePrefix) }
+                pathFilter = { path -> path.startsWith(themePrefix) },
+                pathRewriter = { path -> localPrefix + path.removePrefix(themePrefix) }
             ) { message ->
                 _syncMessage.value = message
                 viewModelScope.launch { addDebugLog(message) }
@@ -542,7 +650,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             if (success) {
                 if (BuildConfig.DEBUG) {
-                    android.util.Log.i(TAG, "Theme download successful: ${repoTheme.id}")
+                    android.util.Log.i(TAG, "Theme download successful: ${theme.id}")
                 }
                 refreshAllInstalledThemes()
 
@@ -569,6 +677,297 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (gameId != null && console != null) {
                     refreshThemesForGame(gameId, console)
                 }
+            }
+        }
+    }
+
+    fun fetchWidgetsForGame(console: String, profileId: String) {
+        if (_storeWidgets.value.containsKey(profileId)) {
+            if (profileId in _installedWidgetProfiles.value) {
+                checkForWidgetUpdates(console, profileId)
+            }
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            // Try local cache first
+            val local = configManager.loadStoreWidgets(profileId)
+            if (local.isNotEmpty()) {
+                _storeWidgets.value = _storeWidgets.value + (profileId to local)
+                _installedWidgetProfiles.value = _installedWidgetProfiles.value + profileId
+                refreshInstalledWidgetIds(profileId)
+                checkForWidgetUpdates(console, profileId)
+                return@launch
+            }
+            // Fetch from remote
+            val rawUrl = _rawBaseUrl.value
+            if (rawUrl.isBlank()) return@launch
+            val widgets = syncService.fetchWidgetsJson(rawUrl, console, profileId)
+            if (widgets != null) {
+                _storeWidgets.value = _storeWidgets.value + (profileId to widgets)
+            }
+        }
+    }
+
+    private fun checkForWidgetUpdates(console: String, profileId: String) {
+        if (!_checkedWidgetProfiles.add(profileId)) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val rawUrl = _rawBaseUrl.value
+            if (rawUrl.isBlank()) return@launch
+            val remote = syncService.fetchWidgetsJson(rawUrl, console, profileId) ?: return@launch
+            val local = _storeWidgets.value[profileId] ?: return@launch
+            if (remote != local) {
+                _widgetUpdatesAvailable.value = _widgetUpdatesAvailable.value + profileId
+            }
+        }
+    }
+
+    fun downloadWidgets(console: String, profileId: String) {
+        if (!isValidId(profileId)) return
+        downloadWidgetsInternal(console, profileId, "Downloading widgets...")
+    }
+
+    fun updateWidgets(console: String, profileId: String) {
+        if (!isValidId(profileId)) return
+        downloadWidgetsInternal(console, profileId, "Updating widgets...") {
+            _widgetUpdatesAvailable.value = _widgetUpdatesAvailable.value - profileId
+        }
+    }
+
+    private fun downloadWidgetsInternal(
+        console: String,
+        profileId: String,
+        statusMessage: String,
+        onSuccess: (() -> Unit)? = null
+    ) {
+        if (_isSyncing.value) return
+        _isSyncing.value = true
+        _syncMessage.value = statusMessage
+
+        val widgetPrefix = "themes/$console/$profileId/widgets/"
+        val localPrefix = "widgets/$profileId/"
+        viewModelScope.launch(Dispatchers.IO) {
+            val success = syncService.downloadAndExtract(
+                url = _appConfig.value.repoUrl,
+                stripRoot = true,
+                pathFilter = { path -> path.startsWith(widgetPrefix) },
+                pathRewriter = { path -> localPrefix + path.removePrefix(widgetPrefix) }
+            ) { message ->
+                _syncMessage.value = message
+                viewModelScope.launch { addDebugLog(message) }
+            }
+
+            _isSyncing.value = false
+
+            if (success) {
+                _installedWidgetProfiles.value = _installedWidgetProfiles.value + profileId
+                val widgets = configManager.loadStoreWidgets(profileId)
+                if (widgets.isNotEmpty()) {
+                    _storeWidgets.value = _storeWidgets.value + (profileId to widgets)
+                }
+                refreshInstalledWidgetIds(profileId)
+                onSuccess?.invoke()
+            }
+        }
+    }
+
+    fun getInstalledStoreWidgets(profileId: String): List<StoreWidget> {
+        val all = _storeWidgets.value[profileId] ?: return emptyList()
+        val installed = _installedWidgetIds.value[profileId] ?: return emptyList()
+        return all.filter { it.id in installed }
+    }
+
+    fun refreshInstalledWidgetIds(profileId: String) {
+        val widgets = _storeWidgets.value[profileId] ?: return
+        val installed = widgets.filter { configManager.isWidgetFileInstalled(profileId, it.src) }.map { it.id }.toSet()
+        _installedWidgetIds.value = _installedWidgetIds.value + (profileId to installed)
+    }
+
+    fun downloadSingleWidget(console: String, profileId: String, widget: StoreWidget) {
+        if (_isSyncing.value) return
+        _isSyncing.value = true
+        _syncMessage.value = "Downloading ${widget.label}..."
+        viewModelScope.launch(Dispatchers.IO) {
+            val rawUrl = _rawBaseUrl.value
+            if (rawUrl.isNotBlank()) {
+                val remoteUrl = "$rawUrl/themes/$console/$profileId/widgets/${widget.src}"
+                val localFile = File(configManager.getWidgetsDir(), "$profileId/${widget.src}")
+                val success = syncService.downloadSingleFile(remoteUrl, localFile)
+                if (success) {
+                    if (!configManager.hasInstalledWidgets(profileId)) {
+                        val jsonUrl = "$rawUrl/themes/$console/$profileId/widgets/widgets.json"
+                        val jsonFile = File(configManager.getWidgetsDir(), "$profileId/widgets.json")
+                        syncService.downloadSingleFile(jsonUrl, jsonFile)
+                        _installedWidgetProfiles.value = _installedWidgetProfiles.value + profileId
+                    }
+                    refreshInstalledWidgetIds(profileId)
+                }
+            }
+            _isSyncing.value = false
+        }
+    }
+
+    fun deleteSingleWidget(profileId: String, widget: StoreWidget) {
+        viewModelScope.launch(Dispatchers.IO) {
+            configManager.deleteWidgetFile(profileId, widget.src)
+            refreshInstalledWidgetIds(profileId)
+            val remaining = _installedWidgetIds.value[profileId] ?: emptySet()
+            if (remaining.isEmpty()) {
+                configManager.deleteWidgets(profileId)
+                _installedWidgetProfiles.value = _installedWidgetProfiles.value - profileId
+                _installedWidgetIds.value = _installedWidgetIds.value - profileId
+            }
+        }
+    }
+
+    fun deleteAllWidgets(profileId: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            configManager.deleteWidgets(profileId)
+            _installedWidgetProfiles.value = _installedWidgetProfiles.value - profileId
+            _installedWidgetIds.value = _installedWidgetIds.value - profileId
+        }
+    }
+
+    fun buildCustomThemeConfigV2(
+        profileId: String,
+        console: String,
+        selectedWidgetIds: List<String>,
+        screenAssignments: Map<String, ScreenTarget>
+    ): ThemeConfig? {
+        if (!isValidId(profileId)) return null
+        val allWidgets = getInstalledStoreWidgets(profileId)
+        if (allWidgets.isEmpty()) return null
+
+        val selectedWidgets = allWidgets.filter { it.id in selectedWidgetIds }
+        if (selectedWidgets.isEmpty()) return null
+
+        // Apply screen assignments, override widget's default screenTarget
+        val assignedWidgets = selectedWidgets.map { widget ->
+            val target = screenAssignments[widget.id] ?: widget.screenTarget ?: ScreenTarget.PRIMARY
+            widget.toWidgetConfig().copy(screenTarget = target)
+        }
+
+        return ThemeConfig(
+            id = "${OverlayService.CUSTOM_THEME_ID_PREFIX}$profileId",
+            meta = ThemeMeta(name = "Custom Overlay", author = "User"),
+            targetProfileId = profileId,
+            targetConsole = console,
+            type = ThemeType.OVERLAY,
+            assetsPath = File(configManager.getRootDir(), "widgets/$profileId").absolutePath,
+            widgets = assignedWidgets
+        )
+    }
+
+    fun loadCustomOverlayConfig(profileId: String): CustomOverlayConfig? {
+        return configManager.loadCustomOverlayConfig(profileId)
+    }
+
+    fun saveCustomOverlayConfig(config: CustomOverlayConfig) {
+        viewModelScope.launch(Dispatchers.IO) {
+            configManager.saveCustomOverlayConfig(config)
+        }
+    }
+
+    fun loadSavedOverlayIntoBuilder(overlayId: String) {
+        val saved = _savedOverlays.value.find { it.id == overlayId } ?: return
+        saveCustomOverlayConfig(CustomOverlayConfig(
+            profileId = saved.profileId,
+            selectedWidgetIds = saved.selectedWidgetIds,
+            console = saved.console,
+            screenAssignments = saved.screenAssignments
+        ))
+    }
+
+    // --- Saved Overlays (user presets) ---
+
+    fun refreshSavedOverlays() {
+        _savedOverlays.value = configManager.loadUserOverlays()
+    }
+
+    fun buildSavedOverlayThemeConfig(saved: SavedOverlayConfig, console: String): ThemeConfig? {
+        if (!isValidId(saved.profileId)) return null
+        val allWidgets = getInstalledStoreWidgets(saved.profileId)
+        if (allWidgets.isEmpty()) return null
+
+        val selectedWidgets = allWidgets.filter { it.id in saved.selectedWidgetIds }
+        if (selectedWidgets.isEmpty()) return null
+
+        val dualScreen = _isDualScreen.value
+        val assignedWidgets = selectedWidgets.map { widget ->
+            val target = if (!dualScreen) ScreenTarget.PRIMARY
+                         else saved.screenAssignments[widget.id] ?: widget.screenTarget ?: ScreenTarget.PRIMARY
+            widget.toWidgetConfig().copy(screenTarget = target)
+        }
+
+        val hasSecondary = assignedWidgets.any { it.screenTarget == ScreenTarget.SECONDARY }
+        val type = if (hasSecondary && dualScreen) ThemeType.BUNDLE else ThemeType.OVERLAY
+
+        return ThemeConfig(
+            id = saved.id,
+            meta = ThemeMeta(name = saved.name, author = "User"),
+            targetProfileId = saved.profileId,
+            targetConsole = console,
+            type = type,
+            assetsPath = File(configManager.getRootDir(), "widgets/${saved.profileId}").absolutePath,
+            widgets = assignedWidgets
+        )
+    }
+
+    fun saveOverlayPreset(
+        name: String,
+        profileId: String,
+        console: String?,
+        selectedWidgetIds: List<String>,
+        screenAssignments: Map<String, ScreenTarget>
+    ): String {
+        val id = "uo_${UUID.randomUUID().toString().take(8)}"
+        val config = SavedOverlayConfig(
+            id = id,
+            name = name,
+            profileId = profileId,
+            console = console,
+            selectedWidgetIds = selectedWidgetIds,
+            screenAssignments = screenAssignments
+        )
+        configManager.saveUserOverlay(config)
+
+        // Copy layout files from the custom builder overlay
+        val sourceId = "${OverlayService.CUSTOM_THEME_ID_PREFIX}$profileId"
+        val isDual = _isDualScreen.value
+        if (isDual) {
+            configManager.copyOverlayLayout(sourceId, id, "primary")
+            configManager.copyOverlayLayout(sourceId, id, "secondary")
+        } else {
+            configManager.copyOverlayLayout(sourceId, id, null)
+        }
+
+        refreshSavedOverlays()
+        val gameId = detectedGameId.value
+        val det = detectedConsole.value
+        if (gameId != null && det != null) {
+            refreshThemesForGame(gameId, det)
+        }
+        return id
+    }
+
+    fun saveOverlayIcon(overlayId: String, uri: android.net.Uri, contentResolver: android.content.ContentResolver) {
+        try {
+            val iconFile = java.io.File(configManager.getUserOverlaysDir(), "${overlayId}_icon.png")
+            contentResolver.openInputStream(uri)?.use { input ->
+                iconFile.outputStream().use { output -> input.copyTo(output) }
+            }
+        } catch (e: Exception) {
+            Log.w("MainViewModel", "Failed to save overlay icon: ${e.message}")
+        }
+    }
+
+    fun deleteOverlayPreset(id: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            configManager.deleteUserOverlay(id)
+            refreshSavedOverlays()
+            val gameId = detectedGameId.value
+            val console = detectedConsole.value
+            if (gameId != null && console != null) {
+                refreshThemesForGame(gameId, console)
             }
         }
     }
@@ -639,7 +1038,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     android.util.Log.i(TAG, "Sync successful, refreshing configs.")
                 }
                 refreshAllInstalledThemes()
-                
+
+                try {
+                    val repoUrl = _appConfig.value.repoUrl
+                    _rawBaseUrl.value = syncService.deriveRawBaseUrl(repoUrl)
+                    _repoIndex.value = syncService.fetchRepoIndex(repoUrl)
+                } catch (_: Exception) { /* index fetch failure shouldn't break sync */ }
+
                 viewModelScope.launch {
                     memoryService.stop()
                     memoryService.start(configManager.getConsoleConfigs())
@@ -661,29 +1066,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             android.util.Log.d(TAG, "DEBUG: $message")
         }
         val timestamp = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-        val current = _debugLogs.value.toMutableList()
-        current.add(0, "$timestamp: $message")
-
-        if (current.size > MAX_DEBUG_LOGS) {
-            current.subList(MAX_DEBUG_LOGS, current.size).clear()
-        }
-
-        _debugLogs.value = current
+        val entry = "$timestamp: $message"
+        _debugLogs.value = listOf(entry) + _debugLogs.value.take(MAX_DEBUG_LOGS - 1)
     }
-
-    fun requestSettings() {
-        viewModelScope.launch { _showSettingsEvent.emit(Unit) }
-    }
-
-    fun writeMemory(address: Long, data: ByteArray) {
-        viewModelScope.launch(Dispatchers.IO) {
-            memoryService.writeMemory(address, data)
-        }
-    }
-    
-    fun writeVariable(varId: String, value: Int) = memoryService.writeVariable(varId, value)
-    
-    fun runMacro(macroId: String) = memoryService.runMacro(macroId) { addDebugLog(it) }
 
     override fun onCleared() {
         super.onCleared()

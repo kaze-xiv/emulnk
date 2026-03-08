@@ -73,7 +73,7 @@ class MemoryService(private val repository: MemoryRepository) {
                 var bestConsole: String? = null
                 var matchedPort: Int? = null
 
-                // Phase 1 — IDENTIFY: probe each unique port for EMLK handshake
+                // Phase 1 IDENTIFY: probe each unique port for EMLK handshake
                 val portsToProbe = consoleConfigs.map { it.port }.distinct()
                     .filter { !portIdentity.containsKey(it) }
                 for (port in portsToProbe) {
@@ -85,7 +85,7 @@ class MemoryService(private val repository: MemoryRepository) {
                     }
                 }
 
-                // Phase 2 — Game detection: only probe configs that match port identity
+                // Phase 2 Game detection: only probe configs that match port identity
                 // Cache virtual serial reads per port to avoid redundant UDP round-trips
                 val virtualSerialCache = mutableMapOf<Int, String?>()
 
@@ -177,7 +177,9 @@ class MemoryService(private val repository: MemoryRepository) {
                         }
                     }
                     // After extended failures, re-identify to handle emulator
-                    // switches on the same port (e.g. Dolphin → RetroArch)
+                    // switches on the same port (e.g. Dolphin → RetroArch).
+                    // Reset to MAX_DETECTION_FAILURES (not 0) so the next cycle
+                    // immediately re-probes identity without re-clearing game state.
                     if (detectionFailures >= MemoryConstants.IDENTITY_REFRESH_FAILURES) {
                         portIdentity.clear()
                         detectionFailures = MemoryConstants.MAX_DETECTION_FAILURES
@@ -258,7 +260,7 @@ class MemoryService(private val repository: MemoryRepository) {
                 if (step.delay != null) delay(step.delay)
                 if (step.varId != null && step.value != null) {
                     val targetValue = if (step.value.all { it.isDigit() || it == '-' }) {
-                        step.value.toInt()
+                        step.value.toIntOrNull() ?: 0
                     } else {
                         (_uiState.value.raw[step.value] as? Number)?.toInt() ?: 0
                     }
@@ -273,6 +275,12 @@ class MemoryService(private val repository: MemoryRepository) {
         repository.writeMemory(address, data)
     }
 
+    /**
+     * Resolve a multi-level pointer chain to a final memory address.
+     * Reads the base pointer, then walks each offset, dereferencing intermediate
+     * pointers (mask to 32-bit unsigned) and adding the offset at each step.
+     * The last offset is added without dereferencing, yielding the target address.
+     */
     private fun resolveEffectiveAddress(point: DataPoint, gameId: String?, platform: String? = null): Long? {
         if (point.pointer != null) {
             val chain = point.offsets
@@ -287,13 +295,13 @@ class MemoryService(private val repository: MemoryRepository) {
 
             val ptrData = repository.readMemory(ptrAddr, 4) ?: return null
             var addr = ByteBuffer.wrap(ptrData).order(order).int.toLong() and 0xFFFFFFFFL
-            if (addr == 0L) return null // Null pointer — entity not loaded
+            if (addr == 0L) return null // Null pointer, entity not loaded
 
             for (i in chain.indices) {
                 val off = parseHex(chain[i]) ?: return null
                 addr += off
                 if (i < chain.lastIndex) {
-                    // Intermediate: dereference
+                    // Intermediate: dereference and mask to 32-bit unsigned
                     val next = repository.readMemory(addr, 4) ?: return null
                     addr = ByteBuffer.wrap(next).order(order).int.toLong() and 0xFFFFFFFFL
                     if (addr == 0L) return null
