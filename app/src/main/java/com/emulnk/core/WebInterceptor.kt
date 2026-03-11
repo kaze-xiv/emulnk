@@ -100,7 +100,8 @@ fun WebSettings.configureForOverlay() {
     allowFileAccess = false
     allowContentAccess = false
     cacheMode = WebSettings.LOAD_NO_CACHE
-    useWideViewPort = true
+    // false = viewport matches WebView's layout width (container), not screen width
+    useWideViewPort = false
     loadWithOverviewMode = false
     setSupportZoom(false)
     builtInZoomControls = false
