@@ -709,7 +709,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             val success = syncService.downloadAndExtract(
                 url = getSyncUrl(),
-                stripRoot = true,
+                stripRoot = false,
                 pathFilter = { path -> path.startsWith(themePrefix) },
                 pathRewriter = { path -> localPrefix + path.removePrefix(themePrefix) }
             ) { message ->
@@ -819,7 +819,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             val success = syncService.downloadAndExtract(
                 url = getSyncUrl(),
-                stripRoot = true,
+                stripRoot = false,
                 pathFilter = { path -> path.startsWith(widgetPrefix) },
                 pathRewriter = { path -> localPrefix + path.removePrefix(widgetPrefix) }
             ) { message ->
@@ -1102,7 +1102,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             val success = syncService.downloadAndExtract(
                 url = getSyncUrl(),
-                stripRoot = true,
+                stripRoot = false,
                 pathFilter = if (isDevSync) null else { path ->
                     path == "index.json" ||
                     path == "consoles.json" ||
