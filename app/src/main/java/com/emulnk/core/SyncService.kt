@@ -31,6 +31,14 @@ class SyncService(private var rootDir: File) {
             .connectTimeout(NetworkConstants.CONNECT_TIMEOUT_MS.toLong(), TimeUnit.MILLISECONDS)
             .readTimeout(NetworkConstants.READ_TIMEOUT_MS.toLong(), TimeUnit.MILLISECONDS)
             .build()
+        /** Longer timeouts for dev server (zip may be built on-demand). */
+        private val devClientLazy = lazy {
+            OkHttpClient.Builder()
+                .connectTimeout(5, TimeUnit.SECONDS)
+                .readTimeout(30, TimeUnit.SECONDS)
+                .build()
+        }
+        private val devClient by devClientLazy
         private val gson = Gson()
     }
 
@@ -42,6 +50,10 @@ class SyncService(private var rootDir: File) {
         Thread {
             client.dispatcher.executorService.shutdown()
             client.connectionPool.evictAll()
+            if (devClientLazy.isInitialized()) {
+                devClient.dispatcher.executorService.shutdown()
+                devClient.connectionPool.evictAll()
+            }
         }.start()
     }
 
@@ -158,10 +170,12 @@ class SyncService(private var rootDir: File) {
         onProgress: (String) -> Unit
     ): Boolean {
         return try {
-            onProgress("Connecting to GitHub...")
+            onProgress("Connecting...")
             val request = Request.Builder().url(url).build()
+            val isDev = url.contains("__dev_sync")
+            val httpClient = if (isDev) devClient else client
 
-            client.newCall(request).execute().use { response ->
+            httpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
                     onProgress("Failed: HTTP ${response.code}")
                     return false

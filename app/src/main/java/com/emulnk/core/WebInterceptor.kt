@@ -50,7 +50,7 @@ object WebInterceptor {
                 if (conn.responseCode == HttpURLConnection.HTTP_OK) {
                     val ext = relativePath.substringAfterLast('.', "").lowercase()
                     val mimeType = MIME_MAP[ext] ?: "application/octet-stream"
-                    // Stream passed to WebView — connection closes when stream is consumed
+                    // Stream passed to WebView - connection closes when stream is consumed
                     return WebResourceResponse(mimeType, "UTF-8", conn.inputStream)
                 }
                 conn.disconnect()

@@ -652,7 +652,7 @@ class OverlayService : Service() {
                         val body = conn.inputStream.bufferedReader().readText()
                         val prev = lastDevMtime
                         lastDevMtime = body
-                        // Skip first tick (prev == null) — only reload when mtime actually changes
+                        // Skip first tick (prev == null) - only reload when mtime actually changes
                         if (prev != null && body != prev) {
                             withContext(Dispatchers.Main) {
                                 for ((_, ww) in widgetViews) {

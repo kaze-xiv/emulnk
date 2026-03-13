@@ -2,11 +2,11 @@ package com.emulnk.core.math
 
 /**
  * Parses and evaluates simple math expressions using a recursive-descent parser.
- * Pure Kotlin — no Android dependencies.
+ * Pure Kotlin - no Android dependencies.
  *
  * Supports: +, -, *, /, %, ^ (power), parentheses.
  * The placeholder `v` in formulas is replaced with the actual value before parsing.
- * This is NOT arbitrary code evaluation — it's a safe, bounded arithmetic parser.
+ * This is NOT arbitrary code evaluation - it's a safe, bounded arithmetic parser.
  */
 object MathEngine {
 

@@ -94,7 +94,7 @@ object MemoryConstants {
     /** Maximum depth for multi-level pointer chains */
     const val MAX_POINTER_CHAIN_DEPTH = 10
 
-    /** Discovery handshake magic — expects JSON response with hash + game ID */
+    /** Discovery handshake magic - expects JSON response with hash + game ID */
     val IDENTIFY_V2_MAGIC = byteArrayOf(0x45, 0x4D, 0x4C, 0x4B, 0x56, 0x32) // "EMLKV2"
 
     /** UDP timeout for V2 identify (includes hash computation of zipped ROMs) */

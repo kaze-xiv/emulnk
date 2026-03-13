@@ -7,7 +7,7 @@ import com.emulnk.core.model.ProfileConfig
 /**
  * Resolves data point addresses using bundles, pointer chains, or legacy address maps.
  *
- * This class is pure logic — actual memory reads for pointer resolution are delegated
+ * This class is pure logic - actual memory reads for pointer resolution are delegated
  * to the [MemoryReader] interface, which the app module implements via UDP.
  */
 class AddressResolver(

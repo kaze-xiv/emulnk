@@ -69,6 +69,7 @@ class ThemeOverlayChrome(
         isChromeVisible = false
         backButton?.alpha = 0f
         menuButton?.alpha = 0f
+        setButtonsTouchable(false)
     }
 
     fun dismiss() {
@@ -499,12 +500,31 @@ class ThemeOverlayChrome(
         isChromeVisible = false
         backButton?.animate()?.alpha(0f)?.setDuration(200)?.start()
         menuButton?.animate()?.alpha(0f)?.setDuration(200)?.start()
+        setButtonsTouchable(false)
     }
 
     private fun showChromeButtons() {
         isChromeVisible = true
+        setButtonsTouchable(true)
         backButton?.animate()?.alpha(1f)?.setDuration(200)?.start()
         menuButton?.animate()?.alpha(1f)?.setDuration(200)?.start()
+    }
+
+    private fun setButtonsTouchable(touchable: Boolean) {
+        val flags = if (touchable) {
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        } else {
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        }
+        listOf(backButton, menuButton).forEach { btn ->
+            btn?.let {
+                (it.layoutParams as? WindowManager.LayoutParams)?.let { params ->
+                    params.flags = flags
+                    try { windowManager.updateViewLayout(it, params) } catch (_: Exception) {}
+                }
+            }
+        }
     }
 
     private fun removeView(view: View?) {

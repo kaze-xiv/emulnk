@@ -129,7 +129,7 @@
     <string name="builder_tab_all">All</string>
     <string name="builder_no_widgets">No widgets installed for this game.\nDownload widgets from the Gallery first.</string>
     <string name="builder_more_widgets">More widgets available</string>
-    <string name="builder_more_widgets_sub">%1$d more in the Gallery — tap to browse</string>
+    <string name="builder_more_widgets_sub">%1$d more in the Gallery - tap to browse</string>
 
     <!-- Save Overlay -->
     <string name="save_overlay">Save</string>

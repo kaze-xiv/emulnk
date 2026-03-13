@@ -44,7 +44,7 @@ object ProfileMerger {
             name = child.name,
             platform = child.platform,
             gameIds = child.gameIds,
-            extends = null, // Resolved — no longer needed
+            extends = null, // Resolved - no longer needed
             bundles = mergeBundles(child.bundles, parent.bundles),
             dataPoints = mergeById(child.dataPoints.orEmpty(), parent.dataPoints.orEmpty()) { it.id },
             macros = mergeById(child.macros.orEmpty(), parent.macros.orEmpty()) { it.id }

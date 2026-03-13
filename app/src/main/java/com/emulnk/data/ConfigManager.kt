@@ -213,9 +213,12 @@ class ConfigManager(private val context: android.content.Context) {
             }
         } else AppConfig()
 
-        // Migrate repo URL from old feature/overlay branch to main
-        val oldOverlayUrl = "https://github.com/EmuLnk/emulnk-repo/archive/refs/heads/feature/overlay.zip"
-        if (config.repoUrl == oldOverlayUrl) {
+        // Migrate repo URL from old default URLs to release URL
+        val oldUrls = setOf(
+            "https://github.com/EmuLnk/emulnk-repo/archive/refs/heads/feature/overlay.zip",
+            "https://github.com/EmuLnk/emulnk-repo/archive/refs/heads/main.zip"
+        )
+        if (config.repoUrl in oldUrls) {
             val migrated = config.copy(repoUrl = AppConfig().repoUrl)
             saveAppConfig(migrated)
             return@synchronized migrated

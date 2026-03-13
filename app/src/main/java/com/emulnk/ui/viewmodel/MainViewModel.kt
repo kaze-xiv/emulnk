@@ -256,11 +256,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         entry?.label != null -> entry.label
                         else -> null
                     }
-                    if (_appConfig.value.devMode) {
-                        refreshThemesForDevMode()
-                    } else {
-                        refreshThemesForGame(gameId, console)
-                    }
+                    refreshThemesForGame(gameId, console)
                     if (_appConfig.value.autoBoot) {
                         if (romSwapped) delay(500) // let overlay service stop before reselection
                         autoSelectPair(gameId)
@@ -467,7 +463,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val gameId = detectedGameId.value
         val console = detectedConsole.value
         if (gameId != null && console != null) {
-            if (enabled) refreshThemesForDevMode() else refreshThemesForGame(gameId, console)
+            refreshThemesForGame(gameId, console)
         } else if (enabled) {
             refreshThemesForDevMode()
         } else {
@@ -610,7 +606,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         memoryService.updateState { it.copy(settings = currentSettings) }
 
-        // devMode affects theme listing, not data — mock data is injected when no game is detected
+        // devMode affects theme listing, not data. Mock data is injected when no game is detected
         val shouldInjectMock = detectedGameId.value == null
 
         if (shouldInjectMock) {
@@ -1101,16 +1097,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             android.util.Log.d(TAG, "Initiating sync. RootDir: ${currentRootDir.absolutePath}")
         }
 
+        val isDevSync = _appConfig.value.devMode && _appConfig.value.devUrl.isNotBlank()
+
         viewModelScope.launch(Dispatchers.IO) {
             val success = syncService.downloadAndExtract(
                 url = getSyncUrl(),
                 stripRoot = true,
-                pathFilter = { path ->
+                pathFilter = if (isDevSync) null else { path ->
                     path == "index.json" ||
                     path == "consoles.json" ||
                     path == "hashes.json" ||
                     path.startsWith("profiles/")
-                }
+                },
+                pathRewriter = if (isDevSync) { path ->
+                    if (path.startsWith("themes/")) {
+                        // themes/GBA/BPE/widgets/... → widgets/BPE/...
+                        // themes/GBA/BPE/ThemeId/...  → themes/ThemeId/...
+                        val parts = path.removePrefix("themes/").split("/", limit = 4)
+                        if (parts.size >= 4) {
+                            val profileId = parts[1]
+                            val segment = parts[2]
+                            val rest = parts[3]
+                            if (segment == "widgets") "widgets/$profileId/$rest"
+                            else "themes/$segment/$rest"
+                        } else path
+                    } else path
+                } else null
             ) { message ->
                 _syncMessage.value = message
                 viewModelScope.launch { addDebugLog(message) }
@@ -1152,10 +1164,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     memoryService.stop()
                     memoryService.start(configManager.getConsoleConfigs())
 
-                    if (_appConfig.value.devMode) {
+                    val gid = detectedGameId.value
+                    val con = detectedConsole.value
+                    if (_appConfig.value.devMode && gid == null) {
                         refreshThemesForDevMode()
-                    } else if (gameId != null && console != null) {
-                        refreshThemesForGame(gameId, console)
+                    } else if (gid != null && con != null) {
+                        refreshThemesForGame(gid, con)
                     }
                 }
             } else {
