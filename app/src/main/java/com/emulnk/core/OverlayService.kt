@@ -251,12 +251,19 @@ class OverlayService : Service() {
             return START_NOT_STICKY
         }
 
+        val appConfig = configManager.getAppConfig()
+        val hasSecondaryDisplay = DisplayHelper.getSecondaryDisplay(this) != null
+
         // Partition widgets: author-defined screenTarget or user-paired bundle
         val primaryWidgets: List<WidgetConfig>
         if (secondaryThemeConfig != null && !isInteractiveTheme) {
             // Two separate overlays paired by user (bundle path)
             primaryWidgets = allWidgets
             secondaryWidgets = secondaryThemeConfig?.widgets ?: emptyList()
+        } else if (appConfig.isRemoteHost && !hasSecondaryDisplay) {
+            // Remote host mode: phone IS the second screen, show everything here
+            primaryWidgets = allWidgets
+            secondaryWidgets = emptyList()
         } else {
             // Single theme with per-widget screenTarget
             val themeDefault = config.resolvedScreenTarget
@@ -286,8 +293,6 @@ class OverlayService : Service() {
 
         // Synthesize base-layer widget and prepend to widget list
         val baseLayerWidget = baseLayerThemeConfig?.toBaseLayerWidget()
-
-        val appConfig = configManager.getAppConfig()
 
         // Create base-layer FIRST (z-order: behind everything)
         // Route to the correct display based on user's screen choice
@@ -1705,6 +1710,7 @@ class OverlayService : Service() {
         }
 
         // Recreate ThemeOverlayChrome pointing to new base-layer WebView
+        @Suppress("KotlinConstantConditions")
         if (baseLayerWidget != null && isInteractiveTheme && baseLayerTheme != null) {
             val newBaseWW = widgetViews[baseLayerWidget.id]
             if (newBaseWW != null) {

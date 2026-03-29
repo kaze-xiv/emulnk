@@ -137,6 +137,7 @@ class MainActivity : ComponentActivity() {
                 val pairedOverlay by vm.pairedOverlay.collectAsState()
                 val pairedSecondaryOverlay by vm.pairedSecondaryOverlay.collectAsState()
                 val isDualScreen by vm.isDualScreen.collectAsState()
+                val canShowSecondaryContent by vm.canShowSecondaryContent.collectAsState()
                 val isSyncing by vm.isSyncing.collectAsState()
                 val repoIndex by vm.repoIndex.collectAsState()
                 val rawBaseUrl by vm.rawBaseUrl.collectAsState()
@@ -328,7 +329,7 @@ class MainActivity : ComponentActivity() {
                                 isSyncing = isSyncing,
                                 appConfig = appConfig,
                                 rootPath = rootPath,
-                                isDualScreen = isDualScreen,
+                                isDualScreen = canShowSecondaryContent,
                                 onSelectTheme = { theme -> vm.selectTheme(theme) },
                                 onSelectOverlayBundle = { primary, secondary, setDefault ->
                                     val theme = listOfNotNull(primary, secondary).find { it.resolvedType == ThemeType.THEME }
@@ -445,7 +446,7 @@ class MainActivity : ComponentActivity() {
                                 isSyncing = isSyncing,
                                 allInstalledThemes = allInstalledThemes,
                                 appVersionCode = vm.getAppVersionCode(),
-                                isDualScreen = isDualScreen,
+                                isDualScreen = canShowSecondaryContent,
                                 storeWidgets = storeWidgets,
                                 widgetUpdatesAvailable = widgetUpdatesAvailable,
                                 initialProfileId = galleryTargetProfileId,
@@ -495,7 +496,7 @@ class MainActivity : ComponentActivity() {
                                 console = builderScreen.console,
                                 installedWidgets = builderWidgets,
                                 savedConfig = savedBuilderConfig,
-                                isDualScreen = isDualScreen,
+                                isDualScreen = canShowSecondaryContent,
                                 previewBaseUrl = rawBaseUrl.ifBlank { null },
                                 totalWidgetCount = storeWidgets[builderScreen.profileId]?.size ?: 0,
                                 onBack = { currentScreen = Screen.Home },
@@ -534,7 +535,9 @@ class MainActivity : ComponentActivity() {
                                 folderPicker.launch(null)
                             },
                             onSetDevMode = { vm.setDevMode(it) },
-                            onSetDevUrl = { vm.setDevUrl(it) }
+                            onSetDevUrl = { vm.setDevUrl(it) },
+                            onSetEmulatorHost = { vm.setEmulatorHost(it) },
+                            onResetEmulatorHost = { vm.resetEmulatorHost() }
                         )
                     }
 

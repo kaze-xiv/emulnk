@@ -8,15 +8,16 @@ import java.net.DatagramSocket
 import java.net.InetAddress
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import com.emulnk.model.AppConfig
 
 /**
  * Communicates with the emulator via UDP.
  */
 class MemoryRepository(
-    host: String = "127.0.0.1",
+    host: String = AppConfig.DEFAULT_HOST,
     private var port: Int = 55355
 ) {
-    private val address: InetAddress = InetAddress.getByName(host)
+    private var address: InetAddress = InetAddress.getByName(host)
     private var socket: DatagramSocket? = null
 
     companion object {
@@ -28,6 +29,16 @@ class MemoryRepository(
     fun setPort(newPort: Int) {
         if (this.port != newPort) {
             this.port = newPort
+            socket?.close()
+            socket = null
+        }
+    }
+
+    @Synchronized
+    fun setHost(newHost: String) {
+        val newAddress = InetAddress.getByName(newHost)
+        if (this.address != newAddress) {
+            this.address = newAddress
             socket?.close()
             socket = null
         }

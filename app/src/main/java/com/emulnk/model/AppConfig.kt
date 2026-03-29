@@ -19,7 +19,13 @@ data class AppConfig(
     val defaultOverlays: Map<String, String> = emptyMap(), // GameID -> OverlayID
     val defaultBundles: Map<String, OverlayBundle> = emptyMap(), // GameID -> OverlayBundle
     val devMode: Boolean = false,
-    val devUrl: String = ""
+    val devUrl: String = "",
+    val emulatorHost: String = DEFAULT_HOST
 ) {
     val repoUrlShim get() = if (devMode) devUrl else repoUrl
+    val isRemoteHost get() = emulatorHost != DEFAULT_HOST
+
+    companion object {
+        const val DEFAULT_HOST = "127.0.0.1"
+    }
 }

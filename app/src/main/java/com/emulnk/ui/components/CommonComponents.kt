@@ -330,11 +330,15 @@ fun AppSettingsDialog(
     onResetRepoUrl: () -> Unit,
     onChangeRootFolder: () -> Unit,
     onSetDevMode: (Boolean) -> Unit,
-    onSetDevUrl: (String) -> Unit
+    onSetDevUrl: (String) -> Unit,
+    onSetEmulatorHost: (String) -> Unit,
+    onResetEmulatorHost: () -> Unit
 ) {
     var repoUrlText by remember(appConfig.repoUrl) { mutableStateOf(appConfig.repoUrl) }
     var devUrlText by remember(appConfig.devUrl) { mutableStateOf(appConfig.devUrl) }
+    var emulatorHostText by remember(appConfig.emulatorHost) { mutableStateOf(appConfig.emulatorHost) }
     var repoFeedback by remember { mutableStateOf<String?>(null) }
+    var hostFeedback by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(repoFeedback) {
         if (repoFeedback != null) {
@@ -342,10 +346,17 @@ fun AppSettingsDialog(
             repoFeedback = null
         }
     }
+    LaunchedEffect(hostFeedback) {
+        if (hostFeedback != null) {
+            delay(1500)
+            hostFeedback = null
+        }
+    }
 
     val dismissAndSave = {
         if (repoUrlText != appConfig.repoUrl) onSetRepoUrl(repoUrlText)
         if (devUrlText != appConfig.devUrl) onSetDevUrl(devUrlText)
+        if (emulatorHostText != appConfig.emulatorHost) onSetEmulatorHost(emulatorHostText)
         onDismiss()
     }
     Dialog(onDismissRequest = dismissAndSave) {
@@ -433,6 +444,54 @@ fun AppSettingsDialog(
                     }
                     TextButton(onClick = onChangeRootFolder) {
                         Text("Change", color = BrandPurple, fontSize = 12.sp)
+                    }
+                }
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = EmuLnkDimens.spacingMd), color = DividerColor)
+
+                Text("Emulator Host", fontSize = 14.sp, color = TextPrimary)
+                Text("IP address of the device running the emulator", fontSize = 11.sp, color = TextSecondary)
+                Spacer(modifier = Modifier.height(EmuLnkDimens.spacingXs))
+                OutlinedTextField(
+                    value = emulatorHostText,
+                    onValueChange = { emulatorHostText = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    textStyle = TextStyle(fontSize = 11.sp, color = TextPrimary),
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = BrandPurple,
+                        unfocusedBorderColor = TextTertiary
+                    )
+                )
+                Text("e.g. 192.168.1.100", fontSize = 10.sp, color = TextTertiary, modifier = Modifier.padding(top = EmuLnkDimens.spacingXs))
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = EmuLnkDimens.spacingXs),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(EmuLnkDimens.spacingSm)
+                ) {
+                    TextButton(onClick = {
+                        onSetEmulatorHost(emulatorHostText)
+                        hostFeedback = "Saved!"
+                    }) {
+                        Text("Save", color = BrandPurple, fontSize = 12.sp)
+                    }
+                    TextButton(onClick = {
+                        onResetEmulatorHost()
+                        emulatorHostText = AppConfig().emulatorHost
+                        hostFeedback = "Reset to default"
+                    }) {
+                        Text("Reset Default", color = TextSecondary, fontSize = 12.sp)
+                    }
+                    AnimatedVisibility(
+                        visible = hostFeedback != null,
+                        enter = fadeIn(),
+                        exit = fadeOut()
+                    ) {
+                        Text(
+                            hostFeedback ?: "",
+                            fontSize = 11.sp,
+                            color = StatusSuccess
+                        )
                     }
                 }
 

@@ -48,7 +48,7 @@ class MemoryService(private val repository: MemoryRepository) {
     private var pollingJob: Job? = null
     private var detectionFailures = 0
     private var wasGameDetected = false
-    private var activePort: Int? = null
+    @Volatile private var activePort: Int? = null
 
     /** Address resolver using the repository as its memory reader. */
     private val addressResolver = AddressResolver(
@@ -80,6 +80,12 @@ class MemoryService(private val repository: MemoryRepository) {
         detectionJob?.cancel()
         pollingJob?.cancel()
         activePort = null
+    }
+
+    fun setHost(newHost: String) {
+        repository.setHost(newHost)
+        activePort = null
+        if (detectionJob?.isActive == true) startDetection()
     }
 
     fun close() {

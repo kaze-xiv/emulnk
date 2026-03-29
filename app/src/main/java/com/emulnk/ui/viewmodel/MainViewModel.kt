@@ -43,9 +43,12 @@ import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.File
@@ -181,6 +184,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _appConfig = MutableStateFlow(configManager.getAppConfig())
     val appConfig: StateFlow<AppConfig> = _appConfig
 
+    /** True when device can display secondary-screen content (physical dual-screen OR remote host). */
+    val canShowSecondaryContent: StateFlow<Boolean> = combine(_isDualScreen, _appConfig) { dual, config ->
+        dual || config.isRemoteHost
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, _isDualScreen.value)
+
     private val _rootPath = MutableStateFlow(configManager.getRootDir().absolutePath)
     val rootPath: StateFlow<String> = _rootPath
 
@@ -290,7 +298,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val currentAppVersion = configManager.getAppVersionCode()
         val resolvedId = gameId?.let { configManager.resolveProfileId(it) }
         val parentId = resolvedId?.let { configManager.getParentProfileId(it) }
-        val dualScreen = _isDualScreen.value
+        val canShowSecondary = canShowSecondaryContent.value
 
         return allThemes.filter { theme ->
             val minVersion = theme.meta.minAppVersion ?: 1
@@ -301,7 +309,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 return@filter false
             }
 
-            if (!dualScreen && theme.resolvedType != ThemeType.OVERLAY) {
+            if (!canShowSecondary && theme.resolvedType != ThemeType.OVERLAY) {
                 if (BuildConfig.DEBUG) {
                     android.util.Log.d(TAG, "Theme ${theme.id} skipped: single-screen only shows overlays")
                 }
@@ -394,7 +402,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             // Check for saved overlay bundle first (dual-screen pairing)
             val defaultBundle = _appConfig.value.defaultBundles[gameId]
-            if (defaultBundle != null && _isDualScreen.value) {
+            if (defaultBundle != null && canShowSecondaryContent.value) {
                 val primary = defaultBundle.primaryOverlayId?.let { id -> themes.find { it.id == id } }
                 val secondary = defaultBundle.secondaryOverlayId?.let { id -> themes.find { it.id == id } }
                 if (primary != null || secondary != null) {
@@ -422,7 +430,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             when (themeToSelect.resolvedType) {
                 ThemeType.BUNDLE -> selectPair(themeToSelect, null)
                 ThemeType.OVERLAY -> {
-                    if (_isDualScreen.value) {
+                    if (canShowSecondaryContent.value) {
                         if (themeToSelect.resolvedScreenTarget == ScreenTarget.SECONDARY) {
                             selectOverlayBundle(null, themeToSelect)
                         } else {
@@ -475,6 +483,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setDevUrl(url: String) {
         _appConfig.update { it.copy(devUrl = url) }
         configManager.saveAppConfig(_appConfig.value)
+    }
+
+    fun setEmulatorHost(host: String) {
+        _appConfig.update { it.copy(emulatorHost = host) }
+        configManager.saveAppConfig(_appConfig.value)
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                memoryService.setHost(host)
+            } catch (e: Exception) {
+                if (BuildConfig.DEBUG) Log.w(TAG, "Failed to apply emulator host: ${e.message}")
+            }
+        }
+        val gameId = detectedGameId.value
+        val console = detectedConsole.value
+        if (gameId != null && console != null) refreshThemesForGame(gameId, console)
+    }
+
+    fun resetEmulatorHost() {
+        setEmulatorHost(AppConfig().emulatorHost)
     }
 
     fun completeOnboarding() {
