@@ -91,8 +91,11 @@ object MemoryConstants {
     /** Maximum entries in a batch read request */
     const val BATCH_MAX_ENTRIES = 256
 
-    /** Response buffer size for batch reads (16 KB) */
-    const val BATCH_RESPONSE_BUFFER = 16384
+    /** Response buffer size for batch reads (64 KB, near UDP max) */
+    const val BATCH_RESPONSE_BUFFER = 65000
+
+    /** Safe budget, leaves 5 KB headroom below the UDP receive buffer ceiling */
+    const val BATCH_RESPONSE_BUDGET = BATCH_RESPONSE_BUFFER - 5000
 
     /** Poll tier intervals */
     const val POLL_TIER_HIGH_MS = 50L

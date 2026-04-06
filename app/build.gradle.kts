@@ -12,8 +12,8 @@ android {
         applicationId = "com.emulnk"
         minSdk = 33
         targetSdk = 35
-        versionCode = 12
-        versionName = "0.5.7"
+        versionCode = 13
+        versionName = "0.5.8"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

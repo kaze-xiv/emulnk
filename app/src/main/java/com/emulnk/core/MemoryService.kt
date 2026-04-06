@@ -220,9 +220,9 @@ class MemoryService(private val repository: MemoryRepository) {
                         resolved.add(Triple(point, addr, point.size))
                     }
 
-                    // Phase 2: Batch read or sequential fallback
+                    // Phase 2: Batch read (sub-batched to fit response buffer) or sequential fallback
                     val results: List<ByteArray?> = if (resolved.isNotEmpty() && repository.supportsBatch()) {
-                        repository.readBatch(resolved.map { Pair(it.second, it.third) })
+                        batchChunked(resolved.map { Pair(it.second, it.third) })
                     } else {
                         resolved.map { repository.readMemory(it.second, it.third) }
                     }
@@ -279,6 +279,32 @@ class MemoryService(private val repository: MemoryRepository) {
             }
             pollingJobs.add(job)
         }
+    }
+
+    private fun batchChunked(requests: List<Pair<Long, Int>>): List<ByteArray?> {
+        // Response wire format: [2B magic][2B count] + per entry: [2B LE size][size B data]
+        val budget = MemoryConstants.BATCH_RESPONSE_BUDGET
+        val results = arrayOfNulls<ByteArray>(requests.size)
+        var start = 0
+        while (start < requests.size) {
+            var respSize = 4 // header
+            var end = start
+            while (end < requests.size) {
+                val entry = 2 + requests[end].second
+                if (respSize + entry > budget || end - start >= MemoryConstants.BATCH_MAX_ENTRIES) break
+                respSize += entry
+                end++
+            }
+            if (end == start) {
+                Log.w(TAG, "batchChunked: entry at $start exceeds budget (size=${requests[start].second})")
+                end++ // always progress
+            }
+            val sub = requests.subList(start, end)
+            val subResults = repository.readBatch(sub)
+            for (i in subResults.indices) results[start + i] = subResults[i]
+            start = end
+        }
+        return results.toList()
     }
 
     fun writeVariable(varId: String, value: Int) {
